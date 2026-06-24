@@ -1,0 +1,21 @@
+api_version = "2026-04"
+
+[[extensions]]
+name = "Add-on & bundle discount"
+handle = "addon-discount"
+type = "function"
+uid = "2e7ecdcc-ac7b-0a4a-1bfd-9ab6684bc30d7c6c71df"
+description = "Applies each accessory's configured discount when it is in the cart together with its main product."
+
+  [[extensions.targeting]]
+  target = "purchase.product-discount.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"
+
+  [extensions.ui.paths]
+  create = "/"
+  details = "/"

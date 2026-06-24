@@ -1,0 +1,33 @@
+# Classic Partners app config for local tunnel dev.
+# With shopify.web.toml present, `automatically_update_urls_on_dev` works, so
+# application_url stays at the placeholder and the CLI swaps in the live tunnel
+# URL on each `shopify app dev`. No manual pinning needed.
+
+client_id = "6297a7921f5449d50493a70d445e8316"
+name = "bundle-app-dev"
+application_url = "https://shopify.dev/apps/default-app-home"
+embedded = true
+
+[access_scopes]
+# read/write_products: read + write the addon_config product metafield.
+# write_discounts: create the automatic discount that activates the Function.
+scopes = "read_products,write_products,write_discounts"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+
+[build]
+automatically_update_urls_on_dev = true

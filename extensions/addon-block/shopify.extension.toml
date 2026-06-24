@@ -1,0 +1,7 @@
+api_version = "2024-10"
+
+[[extensions]]
+type = "theme"
+name = "Add On & Save"
+handle = "addon-block"
+uid = "1455b5be-3df5-6ff3-20c7-058409de074539c5d0b8"

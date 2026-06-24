@@ -1,0 +1,56 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// Dashboard index — a mirror of each main product's `custom.addon_config`
+// metafield so the admin home can list configured products without scanning
+// the whole catalog. The metafield on the product stays the source of truth.
+model BundleConfig {
+  id             String   @id @default(cuid())
+  shop           String
+  productId      String   // gid://shopify/Product/...
+  productTitle   String
+  productHandle  String
+  productImage   String?  // featured image URL, for the dashboard lists
+  groupCount     Int      @default(0)
+  accessoryCount Int      @default(0)
+  // Denormalised lightweight summary of each group (code/type/title/limited/…)
+  // so the "by bundle" / "by add-on" dashboard views don't refetch every
+  // product's metafield. The metafield stays the source of truth.
+  groupsJson     String   @default("[]")
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, productId])
+  @@index([shop])
+}
