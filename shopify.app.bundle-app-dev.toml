@@ -5,7 +5,7 @@
 
 client_id = "6297a7921f5449d50493a70d445e8316"
 name = "bundle-app-dev"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://addon-discount-production.up.railway.app"
 embedded = true
 
 [access_scopes]
@@ -27,7 +27,12 @@ api_version = "2026-04"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [
+  "https://addon-discount-production.up.railway.app/auth/callback",
+  "https://addon-discount-production.up.railway.app/auth/shopify/callback",
+  "https://addon-discount-production.up.railway.app/api/auth/callback"
+]
 
 [build]
-automatically_update_urls_on_dev = true
+# Pinned to the Railway-hosted admin; don't let `shopify app dev` overwrite it.
+automatically_update_urls_on_dev = false
