@@ -489,6 +489,7 @@ export default function ProductConfig() {
                       prices={priceMap}
                       variants={variantMap}
                       info={infoMap}
+                      mainVariants={variantMap[product.id] || []}
                       mainPrice={mainPrice}
                       currency={currency}
                       dragHandle={
@@ -575,6 +576,7 @@ function GroupCard({
   prices,
   variants,
   info,
+  mainVariants,
   mainPrice,
   currency,
   dragHandle,
@@ -588,6 +590,7 @@ function GroupCard({
   prices: Record<string, number>;
   variants: Record<string, { id: string; title: string }[]>;
   info: Record<string, { title: string; handle: string; image: string | null }>;
+  mainVariants: { id: string; title: string }[];
   mainPrice: number | null;
   currency: string;
   dragHandle: ReactNode;
@@ -802,6 +805,52 @@ function GroupCard({
                   </InlineStack>
                 </>
               )}
+            </BlockStack>
+          </Box>
+        )}
+
+        {isBundle && mainVariants.length > 1 && (
+          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+            <BlockStack gap="150">
+              <Text as="span" variant="bodySm" tone="subdued">
+                Main product variants in this bundle (
+                {group.mainVariantIds?.length ?? mainVariants.length}/
+                {mainVariants.length})
+              </Text>
+              <InlineStack gap="150" wrap>
+                {mainVariants.map((v) => {
+                  const current =
+                    group.mainVariantIds && group.mainVariantIds.length
+                      ? group.mainVariantIds
+                      : mainVariants.map((x) => x.id);
+                  const on = current.includes(v.id);
+                  return (
+                    <Button
+                      key={v.id}
+                      size="micro"
+                      pressed={on}
+                      onClick={() => {
+                        const next = on
+                          ? current.filter((x) => x !== v.id)
+                          : [...current, v.id];
+                        if (next.length === 0) return;
+                        onChange({
+                          mainVariantIds:
+                            next.length === mainVariants.length
+                              ? undefined
+                              : next,
+                        });
+                      }}
+                    >
+                      {v.title}
+                    </Button>
+                  );
+                })}
+              </InlineStack>
+              <Text as="span" variant="bodySm" tone="subdued">
+                Picking this bundle on the storefront switches the main product
+                to the matching variant (image + price).
+              </Text>
             </BlockStack>
           </Box>
         )}

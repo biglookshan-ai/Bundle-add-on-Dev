@@ -251,6 +251,83 @@
     return { id: id, price: 0 };
   }
 
+  function mainVariantObj(ctx, vid) {
+    var d = ctx.mainData;
+    if (!d || !d.variants) return null;
+    return (
+      d.variants.filter(function (x) {
+        return String(x.id) === String(vid);
+      })[0] || null
+    );
+  }
+
+  // The main variant a bundle uses: the currently-selected one when it's allowed
+  // (or the bundle has no restriction), otherwise the first allowed variant.
+  function bundleMainVar(ctx, group) {
+    var cur = mainVariant(ctx); // { id, price }
+    var ids = group && group.mainVariantIds;
+    if (!ids || !ids.length) return cur;
+    var allow = ids.map(gidTail);
+    if (allow.indexOf(String(cur.id)) >= 0) return cur;
+    var v = mainVariantObj(ctx, allow[0]);
+    return v ? { id: v.id, price: v.price } : cur;
+  }
+
+  // Switch the product page's main variant (image + price + picker) — used when a
+  // bundle tied to a specific main variant is selected. Best-effort, Dawn-style.
+  function selectMainVariant(ctx, vid) {
+    var v = mainVariantObj(ctx, vid);
+    if (!v) return;
+    // 1. Drive the theme's own variant picker so it updates price + image itself.
+    try {
+      var opts = v.options || [];
+      var groups = document.querySelectorAll(
+        "variant-selects fieldset, variant-radios fieldset, .product-form__input",
+      );
+      opts.forEach(function (val, i) {
+        var fs = groups[i];
+        if (!fs) return;
+        var radio = fs.querySelector('input[type="radio"][value="' + cssEsc(val) + '"]');
+        if (radio && !radio.checked) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        var sel = fs.querySelector("select");
+        if (sel && sel.value !== val) {
+          sel.value = val;
+          sel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+    } catch (e) {}
+    // 2. Hidden form id + URL (so add-to-cart / sharing reflect the variant).
+    try {
+      document
+        .querySelectorAll('form[action*="/cart/add"] [name="id"]')
+        .forEach(function (inp) {
+          inp.value = v.id;
+        });
+      var url = new URL(window.location.href);
+      url.searchParams.set("variant", v.id);
+      window.history.replaceState({}, "", url);
+    } catch (e) {}
+    // 3. Fallback: swap the main gallery image directly.
+    var img = v.featured_image && (v.featured_image.src || v.featured_image);
+    if (img) {
+      var main = document.querySelector(
+        ".product__media-wrapper img, media-gallery img, .product__media img, .product-media img",
+      );
+      if (main) {
+        main.src = img;
+        main.removeAttribute("srcset");
+      }
+    }
+  }
+
+  function cssEsc(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/["\\]/g, "\\$&");
+  }
+
   function extrasCount(ctx) {
     var n = 0;
     ctx.extras.forEach(function (e) {
@@ -288,6 +365,8 @@
           name: e.title || "Bundle",
           percent: e.percent,
           offerId: e.offerId || null,
+          mainVariantId: e.mainVariantId || null,
+          mainPrice: e.mainPrice || 0,
           items: e.items.map(function (it) {
             return { id: it.id, price: it.price, percent: itemPct(e, it) };
           }),
@@ -302,14 +381,10 @@
         });
       }
     });
-    // Add-ons share one main; a bundle kit's main covers them too. Add a shared
-    // main only when add-ons are selected, none is in the cart, and no bundle
-    // (whose main would satisfy them) is being added.
-    var mainsForAddons =
-      addonItems.length > 0 && !mainInCart && bundles.length === 0 ? 1 : 0;
-    if (bundles.length === 0 && addonItems.length === 0) {
-      mainsForAddons = 1; // bare "add to cart" -> add a main
-    }
+    // Every add-to-cart is a COMPLETE unit: it always brings a main product.
+    // For add-ons (no bundle in this click) add one shared main; a bundle kit
+    // already brings its own main. A bare add also adds a main.
+    var mainsForAddons = bundles.length === 0 ? 1 : 0;
     return {
       bundles: bundles,
       addonItems: addonItems,
@@ -323,14 +398,15 @@
     cta.hidden = false;
     var mv = mainVariant(ctx);
     var plan = buildPlan(ctx, ctx.mainInCart);
-    var mains = plan.mainsForAddons + plan.bundles.length;
-    var count = mains;
-    var total = mains * (mv.price || 0);
+    var count = plan.mainsForAddons + plan.bundles.length;
+    var total = plan.mainsForAddons * (mv.price || 0);
     plan.addonItems.forEach(function (it) {
       count += 1;
       total += discounted(it.price, it.percent);
     });
     plan.bundles.forEach(function (b) {
+      // bundle's own main (its variant price) + its discounted accessories
+      total += b.mainPrice || mv.price || 0;
       b.items.forEach(function (it) {
         count += 1;
         total += discounted(it.price, it.percent);
@@ -825,12 +901,17 @@
         return hasLimited && state === "active" ? group.offerId || null : null;
       }
 
+      var tiedToVariant = !!(group.mainVariantIds && group.mainVariantIds.length);
+
       function storeSelection(state, offerId) {
+        var bm = bundleMainVar(ctx, group);
         ctx.extras.set(key, {
           kind: "bundle",
           percent: 0, // each item carries its own percent
           offerId: offerId || null,
           title: group.title || "Bundle",
+          mainVariantId: tiedToVariant ? bm.id : null,
+          mainPrice: bm.price || 0,
           items: products.map(function (p) {
             var v = chosenVarFor(p) || firstAvailableIn(offeredFor(p));
             return {
@@ -850,8 +931,11 @@
           check.textContent = on ? "✓" : "";
           check.classList.toggle("is-on", on);
         }
-        if (on) storeSelection(state, offerId);
-        else ctx.extras.delete(key);
+        if (on) {
+          storeSelection(state, offerId);
+          // Switch the product page to this bundle's main variant (image+price).
+          if (tiedToVariant) selectMainVariant(ctx, bundleMainVar(ctx, group).id);
+        } else ctx.extras.delete(key);
         ctx.onChange();
       }
 
@@ -889,7 +973,8 @@
         });
         // The bundle shows its WHOLE total (main full price + accessories);
         // only accessories are discounted, so the saving is the accessory saving.
-        var mainPrice = mainVariant(ctx).price || 0;
+        // A variant-tied bundle prices its own main variant.
+        var mainPrice = bundleMainVar(ctx, group).price || 0;
         var totalNow = mainPrice + accNow;
         var totalWas = mainPrice + accWas;
         var saved = accWas - accNow;
@@ -1346,8 +1431,10 @@
             if (extra) for (var k in extra) p[k] = extra[k];
             return p;
           };
-          if (mv.id) {
-            items.push({ id: mv.id, quantity: 1, properties: props() });
+          // A bundle tied to a specific main variant adds THAT variant as its main.
+          var bundleMainId = b.mainVariantId || mv.id;
+          if (bundleMainId) {
+            items.push({ id: bundleMainId, quantity: 1, properties: props() });
           }
           b.items.forEach(function (it) {
             items.push({

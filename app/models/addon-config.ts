@@ -68,6 +68,12 @@ export type AddonGroup = {
   offerId?: string;
   /** Optional limited-time promotion (bundles only). */
   limited?: LimitedOffer;
+  /**
+   * Which MAIN-product variants this bundle is for (variant gids). Empty/undefined
+   * = any main variant. When set, selecting the bundle switches the product page
+   * to that main variant (image + price) and the cart adds that variant.
+   */
+  mainVariantIds?: string[];
 
   /**
    * Soft-deleted. Archived groups are kept (so they can be restored / reused)
@@ -348,6 +354,12 @@ function migrateGroup(g: any): AddonGroup {
     if (limited?.enabled || (typeof g?.offerId === "string" && g.offerId)) {
       group.offerId =
         typeof g?.offerId === "string" && g.offerId ? g.offerId : newOfferId();
+    }
+    if (Array.isArray(g?.mainVariantIds)) {
+      const ids = g.mainVariantIds.filter(
+        (x: any) => typeof x === "string" && x,
+      );
+      if (ids.length) group.mainVariantIds = ids;
     }
   }
 
