@@ -355,12 +355,13 @@ function migrateGroup(g: any): AddonGroup {
       group.offerId =
         typeof g?.offerId === "string" && g.offerId ? g.offerId : newOfferId();
     }
-    if (Array.isArray(g?.mainVariantIds)) {
-      const ids = g.mainVariantIds.filter(
-        (x: any) => typeof x === "string" && x,
-      );
-      if (ids.length) group.mainVariantIds = ids;
-    }
+  }
+
+  // mainVariantIds applies to bundle (which main variant the bundle uses) and
+  // add-on (which main variants the group shows for) groups alike.
+  if (Array.isArray(g?.mainVariantIds)) {
+    const ids = g.mainVariantIds.filter((x: any) => typeof x === "string" && x);
+    if (ids.length) group.mainVariantIds = ids;
   }
 
   return group;

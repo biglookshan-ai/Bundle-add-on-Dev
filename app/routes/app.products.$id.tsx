@@ -809,12 +809,12 @@ function GroupCard({
           </Box>
         )}
 
-        {isBundle && mainVariants.length > 1 && (
+        {!isFree && mainVariants.length > 1 && (
           <Box background="bg-surface-secondary" padding="300" borderRadius="200">
             <BlockStack gap="150">
               <Text as="span" variant="bodySm" tone="subdued">
-                Main product variants in this bundle (
-                {group.mainVariantIds?.length ?? mainVariants.length}/
+                {isBundle ? "Main product variants in this bundle" : "Show this add-on for main variants"}{" "}
+                ({group.mainVariantIds?.length ?? mainVariants.length}/
                 {mainVariants.length})
               </Text>
               <InlineStack gap="150" wrap>
@@ -848,8 +848,9 @@ function GroupCard({
                 })}
               </InlineStack>
               <Text as="span" variant="bodySm" tone="subdued">
-                These are offered as the main-product options inside the bundle —
-                the customer picks one (synced with the product page selector).
+                {isBundle
+                  ? "Offered as the main-product options inside the bundle — the customer picks one (synced with the product page selector)."
+                  : "This add-on group only shows when the selected main variant is one of these — otherwise it's hidden."}
               </Text>
             </BlockStack>
           </Box>

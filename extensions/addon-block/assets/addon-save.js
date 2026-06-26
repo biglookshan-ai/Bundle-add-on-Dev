@@ -508,36 +508,75 @@
 
   /* ---------- ADD-ON groups: tabbed grid of toggle cards ---------- */
 
+  // An add-on group shows only when the current main variant is allowed (or the
+  // group has no main-variant restriction).
+  function addonGroupVisible(ctx, group) {
+    var ids = group.mainVariantIds;
+    if (!ids || !ids.length) return true;
+    var cur = String(readMainVariantId());
+    return (
+      ids
+        .map(gidTail)
+        .indexOf(cur) >= 0
+    );
+  }
+
   function renderAddons(ctx, groups, root) {
     var wrap = root.querySelector("[data-cgp-addons]");
-    if (!groups.length) {
+    if (!wrap || !groups.length) {
       if (wrap) wrap.hidden = true;
       return;
     }
-    wrap.hidden = false;
-
     var tabsEl = wrap.querySelector("[data-cgp-tabs]");
     var gridEl = wrap.querySelector("[data-cgp-grid]");
     ctx.gridEl = gridEl;
 
-    if (groups.length > 1) {
-      groups.forEach(function (group, i) {
-        var tab = el("button", "cgp-tab", group.title || "Add-ons");
-        tab.type = "button";
-        if (i === 0) tab.classList.add("is-active");
-        tab.addEventListener("click", function () {
-          tabsEl.querySelectorAll(".cgp-tab").forEach(function (t) {
-            t.classList.remove("is-active");
-          });
-          tab.classList.add("is-active");
-          renderGroup(ctx, group);
+    function paintAddons() {
+      // Drop selections from groups that are now hidden so they aren't added.
+      groups.forEach(function (g) {
+        if (addonGroupVisible(ctx, g)) return;
+        (g.accessories || []).forEach(function (a) {
+          ctx.extras.delete("addon:" + gidTail(a.productId));
         });
-        tabsEl.appendChild(tab);
       });
-    } else {
-      tabsEl.style.display = "none";
+
+      var visible = groups.filter(function (g) {
+        return addonGroupVisible(ctx, g);
+      });
+      if (!visible.length) {
+        wrap.hidden = true;
+        tabsEl.innerHTML = "";
+        gridEl.innerHTML = "";
+        ctx.onChange();
+        return;
+      }
+      wrap.hidden = false;
+      tabsEl.innerHTML = "";
+      if (visible.length > 1) {
+        tabsEl.style.display = "";
+        visible.forEach(function (group, i) {
+          var tab = el("button", "cgp-tab", group.title || "Add-ons");
+          tab.type = "button";
+          if (i === 0) tab.classList.add("is-active");
+          tab.addEventListener("click", function () {
+            tabsEl.querySelectorAll(".cgp-tab").forEach(function (t) {
+              t.classList.remove("is-active");
+            });
+            tab.classList.add("is-active");
+            renderGroup(ctx, group);
+          });
+          tabsEl.appendChild(tab);
+        });
+      } else {
+        tabsEl.style.display = "none";
+      }
+      renderGroup(ctx, visible[0]);
+      ctx.onChange();
     }
-    renderGroup(ctx, groups[0]);
+
+    paintAddons();
+    // Re-evaluate which add-on groups show when the page main variant changes.
+    ctx.mainVarSync.push(paintAddons);
   }
 
   function renderGroup(ctx, group) {
