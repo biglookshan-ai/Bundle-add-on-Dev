@@ -181,6 +181,7 @@
       freeItems: [], // { productId, title, current() } auto-added free gifts
       resetFns: [], // visual de-selectors, run after a successful add
       bundlePaints: [], // re-render hooks, run once the main product loads
+      mainVarSync: [], // bundles re-sync their main variant on a page variant change
       mainData: null,
       mainInCart: false, // whether the main product is already in the cart
     };
@@ -227,6 +228,31 @@
     setupModal(ctx.modal);
     setupCTA(ctx);
     updateCTA(ctx);
+
+    // When the customer changes the main product variant on the page, let
+    // bundles re-sync their main-variant picker/price.
+    document.addEventListener(
+      "change",
+      function (e) {
+        var t = e.target;
+        if (
+          t &&
+          t.closest &&
+          t.closest(
+            'variant-selects, variant-radios, .product-form__input, form[action*="/cart/add"]',
+          )
+        ) {
+          setTimeout(function () {
+            ctx.mainVarSync.forEach(function (fn) {
+              try {
+                fn();
+              } catch (e) {}
+            });
+          }, 50);
+        }
+      },
+      true,
+    );
 
     // Keep bundle tags + free gifts honest: run now and after every cart change.
     installCartWatcher();
@@ -862,25 +888,73 @@
 
       var selected = false;
       var timer = null;
+      var expanded = false; // View-more open state (persists across re-renders)
       // Customer's chosen variant per accessory (numeric product id -> variant).
-      // Lives outside paint so choices survive re-renders.
       var chosenVars = {};
+      // Customer's chosen MAIN-product variant for this bundle.
+      var chosenMainVar = null;
 
       function offeredFor(p) {
         return offeredVariants(group, p);
       }
-      // The chosen variant for an accessory: auto when only one is offered,
-      // else whatever the customer picked (null until they pick).
       function chosenVarFor(p) {
         var off = offeredFor(p);
         if (off.length <= 1) return off[0];
         return chosenVars[gidTail(p.id)] || null;
       }
+
+      // Which MAIN-product variants this bundle offers (mainVariantIds, else all).
+      function offeredMainVar() {
+        var all = (ctx.mainData && ctx.mainData.variants) || [];
+        var ids = group.mainVariantIds;
+        if (!ids || !ids.length) return all;
+        var allow = {};
+        ids.forEach(function (g) {
+          allow[gidTail(g)] = true;
+        });
+        var f = all.filter(function (v) {
+          return allow[String(v.id)];
+        });
+        return f.length ? f : all;
+      }
+      // Resolved main variant: chosen, or the only one offered, else null (pick).
+      function curMainVar() {
+        if (chosenMainVar) return chosenMainVar;
+        var om = offeredMainVar();
+        return om.length === 1 ? om[0] : null;
+      }
+      function mainPriceVal() {
+        var v = curMainVar();
+        if (v) return v.price || 0;
+        var om = offeredMainVar();
+        return (om[0] && om[0].price) || mainVariant(ctx).price || 0;
+      }
+
       function bundleReady() {
+        if (offeredMainVar().length > 1 && !chosenMainVar) return false;
         return products.every(function (p) {
           return !!chosenVarFor(p);
         });
       }
+
+      // Re-sync the chosen main variant when the page variant changes (one-way:
+      // page -> bundle). Registered globally; fired on a product-form change.
+      function syncMain() {
+        var om = offeredMainVar();
+        if (om.length <= 1) return;
+        var cur = readMainVariantId();
+        var match = om.filter(function (v) {
+          return String(v.id) === String(cur);
+        })[0];
+        if (
+          match &&
+          (!chosenMainVar || String(chosenMainVar.id) !== String(match.id))
+        ) {
+          chosenMainVar = match;
+          paint();
+        }
+      }
+      ctx.mainVarSync.push(syncMain);
 
       // Per-item percent for the current state:
       //  - limited active/upcoming -> uniform deep limited.discountPercent
@@ -901,17 +975,15 @@
         return hasLimited && state === "active" ? group.offerId || null : null;
       }
 
-      var tiedToVariant = !!(group.mainVariantIds && group.mainVariantIds.length);
-
       function storeSelection(state, offerId) {
-        var bm = bundleMainVar(ctx, group);
+        var mv = curMainVar() || offeredMainVar()[0] || mainVariant(ctx);
         ctx.extras.set(key, {
           kind: "bundle",
           percent: 0, // each item carries its own percent
           offerId: offerId || null,
           title: group.title || "Bundle",
-          mainVariantId: tiedToVariant ? bm.id : null,
-          mainPrice: bm.price || 0,
+          mainVariantId: mv ? mv.id : null,
+          mainPrice: (mv && mv.price) || 0,
           items: products.map(function (p) {
             var v = chosenVarFor(p) || firstAvailableIn(offeredFor(p));
             return {
@@ -931,11 +1003,8 @@
           check.textContent = on ? "✓" : "";
           check.classList.toggle("is-on", on);
         }
-        if (on) {
-          storeSelection(state, offerId);
-          // Switch the product page to this bundle's main variant (image+price).
-          if (tiedToVariant) selectMainVariant(ctx, bundleMainVar(ctx, group).id);
-        } else ctx.extras.delete(key);
+        if (on) storeSelection(state, offerId);
+        else ctx.extras.delete(key);
         ctx.onChange();
       }
 
@@ -965,6 +1034,19 @@
         card.classList.toggle("cgp-limited", live);
         card.innerHTML = "";
 
+        // Default the main variant to the page's current one (if it's offered).
+        if (!chosenMainVar) {
+          var om0 = offeredMainVar();
+          if (om0.length <= 1) chosenMainVar = om0[0] || null;
+          else {
+            var cur0 = readMainVariantId();
+            var m0 = om0.filter(function (v) {
+              return String(v.id) === String(cur0);
+            })[0];
+            if (m0) chosenMainVar = m0;
+          }
+        }
+
         var accNow = 0,
           accWas = 0;
         products.forEach(function (p) {
@@ -973,8 +1055,7 @@
         });
         // The bundle shows its WHOLE total (main full price + accessories);
         // only accessories are discounted, so the saving is the accessory saving.
-        // A variant-tied bundle prices its own main variant.
-        var mainPrice = bundleMainVar(ctx, group).price || 0;
+        var mainPrice = mainPriceVal();
         var totalNow = mainPrice + accNow;
         var totalWas = mainPrice + accWas;
         var saved = accWas - accNow;
@@ -1067,49 +1148,65 @@
         card.appendChild(head);
 
         var listEl = el("div", "cgp-bundle__contents");
-        listEl.hidden = true;
         card.appendChild(listEl);
-        // Build the detail list, embedding a variant <select> for any accessory
-        // that offers more than one variant.
+
+        function variantSelect(offered, currentId, onPick) {
+          var s = el("select", "cgp-bundle__variant");
+          var ph = el("option", null, "Choose an option…");
+          ph.value = "";
+          s.appendChild(ph);
+          offered.forEach(function (v) {
+            var o = el("option", null, v.title + (v.available ? "" : " — sold out"));
+            o.value = v.id;
+            if (!v.available) o.disabled = true;
+            s.appendChild(o);
+          });
+          s.value = currentId ? String(currentId) : "";
+          s.addEventListener("change", function () {
+            s.classList.remove("cgp-needs-choice");
+            onPick(
+              offered.filter(function (x) {
+                return String(x.id) === s.value;
+              })[0] || null,
+            );
+          });
+          return s;
+        }
+
+        // Detail list: the MAIN product (with its own variant picker, like the
+        // accessories) first, then each accessory.
         function buildContents() {
           listEl.innerHTML = "";
           if (ctx.mainData) {
+            var om = offeredMainVar();
+            var mainSel =
+              om.length > 1
+                ? variantSelect(om, chosenMainVar && chosenMainVar.id, function (v) {
+                    chosenMainVar = v;
+                    if (v) selectMainVariant(ctx, v.id); // sync to the page picker
+                    if (selected && !bundleReady()) {
+                      setSelected(false, state, offerIdFor(state));
+                      return;
+                    }
+                    paint();
+                  })
+                : null;
             listEl.appendChild(
-              contentRow(ctx, ctx.mainData, 0, "Your product", true, null),
+              contentRow(ctx, ctx.mainData, 0, "Your product", true, mainSel),
             );
           }
           products.forEach(function (p) {
             var off = offeredFor(p);
-            var sel = null;
-            if (off.length > 1) {
-              sel = el("select", "cgp-bundle__variant");
-              var ph = el("option", null, "Choose an option…");
-              ph.value = "";
-              sel.appendChild(ph);
-              off.forEach(function (v) {
-                var o = el(
-                  "option",
-                  null,
-                  v.title + (v.available ? "" : " — sold out"),
-                );
-                o.value = v.id;
-                if (!v.available) o.disabled = true;
-                sel.appendChild(o);
-              });
-              var cur = chosenVars[gidTail(p.id)];
-              sel.value = cur ? String(cur.id) : "";
-              sel.addEventListener("change", function () {
-                chosenVars[gidTail(p.id)] =
-                  off.filter(function (x) {
-                    return String(x.id) === sel.value;
-                  })[0] || null;
-                sel.classList.remove("cgp-needs-choice");
-                if (selected) {
-                  if (bundleReady()) storeSelection(state, offerIdFor(state));
-                  else setSelected(false, state, offerIdFor(state));
-                }
-              });
-            }
+            var sel =
+              off.length > 1
+                ? variantSelect(off, chosenVars[gidTail(p.id)] && chosenVars[gidTail(p.id)].id, function (v) {
+                    chosenVars[gidTail(p.id)] = v;
+                    if (selected) {
+                      if (bundleReady()) storeSelection(state, offerIdFor(state));
+                      else setSelected(false, state, offerIdFor(state));
+                    }
+                  })
+                : null;
             listEl.appendChild(
               contentRow(ctx, p, itemPercentFor(p, state), null, false, sel),
             );
@@ -1117,14 +1214,16 @@
         }
 
         function setExpanded(open) {
+          expanded = open;
           listEl.hidden = !open;
           thumbs.hidden = open;
           if (open && !listEl.childNodes.length) buildContents();
           toggleLine.textContent = open ? "Hide ▴" : "View more ▾";
         }
+        setExpanded(expanded); // restore open state across re-renders
         toggleLine.addEventListener("click", function (e) {
           e.stopPropagation();
-          setExpanded(listEl.hidden);
+          setExpanded(!expanded);
         });
 
         if (state === "upcoming") {

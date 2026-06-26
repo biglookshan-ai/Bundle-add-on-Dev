@@ -848,8 +848,8 @@ function GroupCard({
                 })}
               </InlineStack>
               <Text as="span" variant="bodySm" tone="subdued">
-                Picking this bundle on the storefront switches the main product
-                to the matching variant (image + price).
+                These are offered as the main-product options inside the bundle —
+                the customer picks one (synced with the product page selector).
               </Text>
             </BlockStack>
           </Box>
