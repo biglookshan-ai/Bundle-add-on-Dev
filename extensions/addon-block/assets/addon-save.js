@@ -1013,11 +1013,16 @@
         var om = offeredMainVar();
         return (om[0] && om[0].price) || mainVariant(ctx).price || 0;
       }
-      // A bundle is ONE discount on the whole kit: the main gets the same % as
-      // the accessories (group discountPercent).
-      function mainPercentOf() {
-        var n = Number(group.discountPercent) || 0;
-        return Math.max(0, Math.min(100, n));
+      // A bundle is ONE discount on the whole kit: the main gets the SAME % as
+      // the accessories, including the deep limited price while an offer runs.
+      function mainPercentOf(state) {
+        if (hasLimited && (state === "active" || state === "upcoming")) {
+          return Number(group.limited.discountPercent) || 0;
+        }
+        if (hasLimited && state === "ended" && group.limited.mode !== "revert") {
+          return 0;
+        }
+        return Math.max(0, Math.min(100, Number(group.discountPercent) || 0));
       }
       // Main thumbnail/row image — the chosen variant's own image when it has
       // one, so switching the bundle's main variant updates the small picture.
@@ -1100,7 +1105,7 @@
           title: group.title || "Bundle",
           mainVariantId: mv ? mv.id : null,
           mainPrice: (mv && mv.price) || 0,
-          mainPercent: mainPercentOf(), // 0 unless this bundle discounts the main
+          mainPercent: mainPercentOf(state), // whole-kit %, deep while offer runs
           items: products.map(function (p) {
             var v = chosenVarFor(p) || firstAvailableIn(offeredFor(p));
             return {
@@ -1186,7 +1191,7 @@
         // The bundle shows its WHOLE total (main + accessories). The main is
         // full price unless this bundle opts into discounting the main too.
         var mainWas = mainPriceVal();
-        var mainPct = mainPercentOf();
+        var mainPct = mainPercentOf(state);
         var mainNow = discounted(mainWas, mainPct);
         var totalNow = mainNow + accNow;
         var totalWas = mainWas + accWas;
@@ -1330,7 +1335,7 @@
               contentRow(
                 ctx,
                 ctx.mainData,
-                mainPercentOf(),
+                mainPercentOf(state),
                 "Current product",
                 true,
                 mainSel,

@@ -628,16 +628,7 @@ function GroupCard({
 
   const isFree = group.type === "free";
   const isBundle = group.type === "bundle";
-  const limited = group.limited;
-  const limitedOn = isBundle && Boolean(limited?.enabled);
-  const ended =
-    limitedOn && !!limited?.endsAt && Date.parse(limited.endsAt) < Date.now();
-
-  const patchLimited = (patch: Partial<LimitedOffer>) =>
-    onChange({
-      limited: { ...(limited ?? DEFAULT_LIMITED), ...patch },
-      offerId: group.offerId || newOfferId(),
-    });
+  const limitedOn = isBundle && Boolean(group.limited?.enabled);
 
   // Bundle = ONE discount on the whole kit: the same `discountPercent` hits the
   // main and every accessory. Each line carries its TRUE original (compare-at,
@@ -665,6 +656,7 @@ function GroupCard({
       };
     }),
   ];
+  const bundleTotalNow = bundleLines.reduce((s, l) => s + l.now, 0);
 
   return (
     <Card>
@@ -726,117 +718,6 @@ function GroupCard({
             </Box>
           )}
         </InlineStack>
-
-        {isBundle && (
-          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
-                <Checkbox
-                  label="Limited-time offer (countdown + deeper price)"
-                  checked={limitedOn}
-                  onChange={(checked) =>
-                    onChange(
-                      checked
-                        ? {
-                            limited: {
-                              ...(limited ?? DEFAULT_LIMITED),
-                              enabled: true,
-                            },
-                            offerId: group.offerId || newOfferId(),
-                          }
-                        : {
-                            limited: limited
-                              ? { ...limited, enabled: false }
-                              : { ...DEFAULT_LIMITED, enabled: false },
-                          },
-                    )
-                  }
-                />
-                {limitedOn &&
-                  (ended ? (
-                    <Badge tone="critical">Ended</Badge>
-                  ) : (
-                    <Badge tone="success">Active</Badge>
-                  ))}
-              </InlineStack>
-
-              {limitedOn && (
-                <>
-                  {ended && (
-                    <Banner tone="warning">
-                      <p>
-                        This promotion has ended — the bundle is now at its
-                        {limited?.mode === "end"
-                          ? " normal full price (hidden on the storefront)."
-                          : " normal price."}{" "}
-                        Set a new end date below to start a fresh promotion.
-                      </p>
-                      <Box paddingBlockStart="200">
-                        <Button
-                          onClick={() => patchLimited({ startsAt: "", endsAt: "" })}
-                        >
-                          Start a new promotion
-                        </Button>
-                      </Box>
-                    </Banner>
-                  )}
-                  <InlineStack gap="400" wrap={false} blockAlign="start">
-                    <Box width="50%">
-                      <TextField
-                        label="Offer discount %"
-                        type="number"
-                        min={0}
-                        max={100}
-                        suffix="%"
-                        autoComplete="off"
-                        disabled={ended}
-                        value={String(limited?.discountPercent ?? 0)}
-                        onChange={(v) =>
-                          patchLimited({ discountPercent: clampPercent(v) })
-                        }
-                        helpText="Deep price (whole bundle) while the timer runs."
-                      />
-                    </Box>
-                    <Box width="50%">
-                      <Select
-                        label="When the timer ends"
-                        options={LIMITED_MODE_OPTIONS}
-                        disabled={ended}
-                        value={limited?.mode ?? "revert"}
-                        onChange={(v) => patchLimited({ mode: v as "revert" | "end" })}
-                      />
-                    </Box>
-                  </InlineStack>
-                  <InlineStack gap="400" wrap={false} blockAlign="start">
-                    <Box width="50%">
-                      <TextField
-                        label="Starts"
-                        type={"datetime-local" as any}
-                        autoComplete="off"
-                        disabled={ended}
-                        value={toLocalInput(limited?.startsAt)}
-                        onChange={(v) =>
-                          patchLimited({ startsAt: fromLocalInput(v) })
-                        }
-                        helpText="Leave blank to start immediately."
-                      />
-                    </Box>
-                    <Box width="50%">
-                      <TextField
-                        label="Ends"
-                        type={"datetime-local" as any}
-                        autoComplete="off"
-                        value={toLocalInput(limited?.endsAt)}
-                        onChange={(v) => patchLimited({ endsAt: fromLocalInput(v) })}
-                        helpText="Server-enforced — reverts here even for unpaid carts."
-                      />
-                    </Box>
-                  </InlineStack>
-                </>
-              )}
-            </BlockStack>
-          </Box>
-        )}
 
         {!isFree && mainVariants.length > 1 && (
           <Box background="bg-surface-secondary" padding="300" borderRadius="200">
@@ -1075,8 +956,164 @@ function GroupCard({
             onChange={onChange}
           />
         )}
+
+        {isBundle && (
+          <LimitedOfferCard
+            group={group}
+            totalNow={bundleTotalNow}
+            haveTotal={haveAllPrices}
+            currency={currency}
+            onChange={onChange}
+          />
+        )}
       </BlockStack>
     </Card>
+  );
+}
+
+/**
+ * Limited-time offer — a DEEPER whole-kit discount that runs on a timer. Same
+ * three-way calculator as the normal bundle price (on the current total), plus
+ * the mode + start/end window. Server-enforced via the time-gated discount node.
+ */
+function LimitedOfferCard({
+  group,
+  totalNow,
+  haveTotal,
+  currency,
+  onChange,
+}: {
+  group: AddonGroup;
+  totalNow: number;
+  haveTotal: boolean;
+  currency: string;
+  onChange: (patch: Partial<AddonGroup>) => void;
+}) {
+  const limited = group.limited;
+  const limitedOn = Boolean(limited?.enabled);
+  const ended =
+    limitedOn && !!limited?.endsAt && Date.parse(limited.endsAt) < Date.now();
+  const patchLimited = (patch: Partial<LimitedOffer>) =>
+    onChange({
+      limited: { ...(limited ?? DEFAULT_LIMITED), ...patch },
+      offerId: group.offerId || newOfferId(),
+    });
+  const deepPct = clampPercent(limited?.discountPercent ?? 0);
+  return (
+    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Checkbox
+            label="Limited-time offer (countdown + deeper price)"
+            checked={limitedOn}
+            onChange={(checked) =>
+              onChange(
+                checked
+                  ? {
+                      limited: { ...(limited ?? DEFAULT_LIMITED), enabled: true },
+                      offerId: group.offerId || newOfferId(),
+                    }
+                  : {
+                      limited: limited
+                        ? { ...limited, enabled: false }
+                        : { ...DEFAULT_LIMITED, enabled: false },
+                    },
+              )
+            }
+          />
+          {limitedOn &&
+            (ended ? (
+              <Badge tone="critical">Ended</Badge>
+            ) : (
+              <Badge tone="success">Active</Badge>
+            ))}
+        </InlineStack>
+
+        {limitedOn && (
+          <>
+            {ended && (
+              <Banner tone="warning">
+                <p>
+                  This promotion has ended — the bundle is now at its
+                  {limited?.mode === "end"
+                    ? " normal full price (hidden on the storefront)."
+                    : " normal price."}{" "}
+                  Set a new end date below to start a fresh promotion.
+                </p>
+                <Box paddingBlockStart="200">
+                  <Button
+                    onClick={() => patchLimited({ startsAt: "", endsAt: "" })}
+                  >
+                    Start a new promotion
+                  </Button>
+                </Box>
+              </Banner>
+            )}
+            <BlockStack gap="100">
+              <Text as="span" variant="headingSm">
+                Deal price — deeper bundle discount while the timer runs
+              </Text>
+              {haveTotal ? (
+                <DiscountCalc
+                  price={totalNow}
+                  percent={deepPct}
+                  onChangePercent={(p) =>
+                    patchLimited({ discountPercent: clampPercent(p) })
+                  }
+                />
+              ) : (
+                <Box width="110px">
+                  <TextField
+                    label="Deal discount"
+                    type="text"
+                    inputMode="decimal"
+                    suffix="%"
+                    autoComplete="off"
+                    disabled={ended}
+                    value={pctStr(deepPct)}
+                    onChange={(v) =>
+                      patchLimited({ discountPercent: clampPercent(v) })
+                    }
+                  />
+                </Box>
+              )}
+            </BlockStack>
+            <InlineStack gap="400" wrap blockAlign="start">
+              <Box minWidth="220px">
+                <Select
+                  label="When the timer ends"
+                  options={LIMITED_MODE_OPTIONS}
+                  disabled={ended}
+                  value={limited?.mode ?? "revert"}
+                  onChange={(v) => patchLimited({ mode: v as "revert" | "end" })}
+                />
+              </Box>
+              <Box minWidth="220px">
+                <TextField
+                  label="Starts"
+                  type={"datetime-local" as any}
+                  autoComplete="off"
+                  disabled={ended}
+                  value={toLocalInput(limited?.startsAt)}
+                  onChange={(v) => patchLimited({ startsAt: fromLocalInput(v) })}
+                  helpText="Leave blank to start immediately."
+                />
+              </Box>
+              <Box minWidth="220px">
+                <TextField
+                  label="Ends"
+                  type={"datetime-local" as any}
+                  autoComplete="off"
+                  value={toLocalInput(limited?.endsAt)}
+                  onChange={(v) => patchLimited({ endsAt: fromLocalInput(v) })}
+                  helpText="Server-enforced — reverts even for unpaid carts."
+                />
+              </Box>
+            </InlineStack>
+          </>
+        )}
+      </BlockStack>
+    </Box>
   );
 }
 

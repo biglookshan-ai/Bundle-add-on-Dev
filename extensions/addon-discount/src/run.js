@@ -194,7 +194,6 @@ export function run(input) {
       const product = /** @type {any} */ (line?.merchandise)?.product;
       const pid = product?.id;
       if (typeof pid !== "string") continue;
-      if (product?.addonConfig?.value) continue; // never discount the main
       const lineQty = Number(line?.quantity) || 0;
       if (lineQty <= 0) continue;
 
@@ -202,8 +201,12 @@ export function run(input) {
       if (!config) continue; // kit main removed
       const group = findBundleByOffer(config, limitedOfferId);
       if (!group || !group.limited || !group.limited.enabled) continue;
-      if (!groupHasProduct(group, pid)) continue;
       if (!allPresentUnder(group, presentByGrp.get(grp))) continue;
+      // A bundle is one deep discount on the WHOLE kit: the main (no `_addon_for`)
+      // always qualifies; an accessory must belong to this group. (Tag-based so a
+      // product that is itself a configured main can still be discounted here.)
+      const isAcc = !!(/** @type {any} */ (line)?.cgpFor?.value);
+      if (isAcc && !groupHasProduct(group, pid)) continue;
 
       const percent = clampPercent(group.limited.discountPercent);
       if (percent <= 0) continue;
@@ -310,7 +313,11 @@ export function run(input) {
         const config = mainConfigByGrp.get(grp);
         const group = findBundleById(config, bid);
         if (group && allPresentUnder(group, presentByGrp.get(grp))) {
-          const pct = clampPercent(group.discountPercent);
+          // "end"-mode limited bundle: full price outside the window (the deep
+          // price is the time-gated limited node's job); the main node gives 0.
+          const endMode =
+            group.limited && group.limited.enabled && group.limited.mode === "end";
+          const pct = endMode ? 0 : clampPercent(group.discountPercent);
           if (pct > 0) {
             discounts.push({
               message: `Bundle ${pct}% off`,
