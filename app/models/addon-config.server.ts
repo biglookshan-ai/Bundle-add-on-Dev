@@ -178,13 +178,14 @@ export async function fetchProductPrices(
   ids: string[],
 ): Promise<{
   prices: Record<string, number>;
+  compareAt: Record<string, number>;
   variants: Record<string, VariantOption[]>;
   info: Record<string, ProductMeta>;
   currency: string;
 }> {
   const unique = Array.from(new Set(ids)).filter(Boolean);
   if (unique.length === 0)
-    return { prices: {}, variants: {}, info: {}, currency: "USD" };
+    return { prices: {}, compareAt: {}, variants: {}, info: {}, currency: "USD" };
   const resp = await admin.graphql(
     `#graphql
       query Prices($ids: [ID!]!) {
@@ -195,7 +196,7 @@ export async function fetchProductPrices(
             handle
             featuredImage { url }
             priceRangeV2 { minVariantPrice { amount currencyCode } }
-            variants(first: 100) { nodes { id title } }
+            variants(first: 100) { nodes { id title price compareAtPrice } }
           }
         }
       }`,
@@ -203,6 +204,9 @@ export async function fetchProductPrices(
   );
   const json = await resp.json();
   const prices: Record<string, number> = {};
+  // True original (compare-at) of the representative variant, so a product that
+  // is ALREADY on sale shows its real MSRP — not the already-discounted price.
+  const compareAt: Record<string, number> = {};
   const variants: Record<string, VariantOption[]> = {};
   const info: Record<string, ProductMeta> = {};
   let currency = "USD";
@@ -218,12 +222,24 @@ export async function fetchProductPrices(
       prices[n.id] = Number(mp.amount) || 0;
       currency = mp.currencyCode || currency;
     }
-    const vs = (n?.variants?.nodes ?? [])
-      .filter((v: any) => v?.id)
-      .map((v: any) => ({ id: v.id, title: v.title }));
+    const rawVariants = (n?.variants?.nodes ?? []).filter((v: any) => v?.id);
+    // Representative variant = the lowest-priced one (matches minVariantPrice).
+    let rep: any = null;
+    for (const v of rawVariants) {
+      const p = Number(v.price) || 0;
+      if (!rep || p < (Number(rep.price) || 0)) rep = v;
+    }
+    if (rep) {
+      const repPrice = Number(rep.price) || prices[n.id] || 0;
+      const repCompare = Number(rep.compareAtPrice) || 0;
+      // Use compare-at only when it's a real higher MSRP; else there's no
+      // pre-existing discount and the "original" equals the current price.
+      compareAt[n.id] = repCompare > repPrice ? repCompare : repPrice;
+    }
+    const vs = rawVariants.map((v: any) => ({ id: v.id, title: v.title }));
     if (vs.length) variants[n.id] = vs;
   }
-  return { prices, variants, info, currency };
+  return { prices, compareAt, variants, info, currency };
 }
 
 /** List all configured products for the dashboard, newest first. */

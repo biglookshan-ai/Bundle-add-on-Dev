@@ -1,4 +1,11 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  Fragment,
+  type ReactNode,
+} from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
@@ -61,11 +68,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     product.id,
     ...config.groups.flatMap((g) => g.accessories.map((a) => a.productId)),
   ];
-  const { prices, variants, info, currency } = await fetchProductPrices(
-    admin,
-    ids,
-  );
-  return { product, config, prices, variants, info, currency };
+  const { prices, compareAt, variants, info, currency } =
+    await fetchProductPrices(admin, ids);
+  return { product, config, prices, compareAt, variants, info, currency };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -221,6 +226,7 @@ export default function ProductConfig() {
     product,
     config: initial,
     prices,
+    compareAt,
     variants,
     info,
     currency,
@@ -231,6 +237,7 @@ export default function ProductConfig() {
   const [groups, setGroups] = useState<AddonGroup[]>(initial.groups);
   const [tab, setTab] = useState(0);
   const [priceMap, setPriceMap] = useState<Record<string, number>>(prices);
+  const compareMap = compareAt;
   const [variantMap, setVariantMap] =
     useState<Record<string, { id: string; title: string }[]>>(variants);
   const [infoMap, setInfoMap] =
@@ -487,10 +494,12 @@ export default function ProductConfig() {
                     <GroupCard
                       group={group}
                       prices={priceMap}
+                      compareAt={compareMap}
                       variants={variantMap}
                       info={infoMap}
                       mainVariants={variantMap[product.id] || []}
                       mainPrice={mainPrice}
+                      mainCompareAt={compareMap[product.id] ?? mainPrice}
                       currency={currency}
                       dragHandle={
                         <span
@@ -574,10 +583,12 @@ export default function ProductConfig() {
 function GroupCard({
   group,
   prices,
+  compareAt,
   variants,
   info,
   mainVariants,
   mainPrice,
+  mainCompareAt,
   currency,
   dragHandle,
   onChange,
@@ -588,10 +599,12 @@ function GroupCard({
 }: {
   group: AddonGroup;
   prices: Record<string, number>;
+  compareAt: Record<string, number>;
   variants: Record<string, { id: string; title: string }[]>;
   info: Record<string, { title: string; handle: string; image: string | null }>;
   mainVariants: { id: string; title: string }[];
   mainPrice: number | null;
+  mainCompareAt: number | null;
   currency: string;
   dragHandle: ReactNode;
   onChange: (patch: Partial<AddonGroup>) => void;
@@ -627,15 +640,31 @@ function GroupCard({
     });
 
   // Bundle = ONE discount on the whole kit: the same `discountPercent` hits the
-  // main and every accessory. Totals are just the sum at that single percent.
-  const mainOrig = mainPrice ?? 0;
-  const accOrig = group.accessories.reduce(
-    (s, a) => s + (prices[a.productId] ?? 0),
-    0,
-  );
+  // main and every accessory. Each line carries its TRUE original (compare-at,
+  // `orig`) and its current Shopify selling price (`now`, already discounted if
+  // the product is on sale). Our bundle discount applies on top of `now`.
   const haveAllPrices = group.accessories.every(
     (a) => prices[a.productId] != null,
   );
+  const bundleLines: { label: string; orig: number; now: number }[] = [
+    ...(mainPrice != null
+      ? [
+          {
+            label: "Main product",
+            orig: mainCompareAt ?? mainPrice,
+            now: mainPrice,
+          },
+        ]
+      : []),
+    ...group.accessories.map((a) => {
+      const now = prices[a.productId] ?? 0;
+      return {
+        label: info[a.productId]?.title || a.title || a.handle,
+        orig: compareAt[a.productId] ?? now,
+        now,
+      };
+    }),
+  ];
 
   return (
     <Card>
@@ -1041,9 +1070,7 @@ function GroupCard({
         {isBundle && group.accessories.length > 0 && haveAllPrices && (
           <BundleTotals
             group={group}
-            mainPrice={mainPrice}
-            mainOrig={mainOrig}
-            accOrig={accOrig}
+            lines={bundleLines}
             currency={currency}
             onChange={onChange}
           />
@@ -1099,24 +1126,23 @@ function DiscountCalc({
   };
   const onBlur = () => setActive(null);
   return (
-    <InlineStack gap="200" blockAlign="end" wrap={false}>
-      <Box width="108px">
+    <InlineStack gap="200" blockAlign="end" wrap>
+      <Box width="120px">
         <TextField
           label="New price"
-          type="number"
-          min={0}
+          type="text"
+          inputMode="decimal"
           autoComplete="off"
           value={valOf("price")}
           onChange={(v) => onF("price", v)}
           onBlur={onBlur}
         />
       </Box>
-      <Box width="78px">
+      <Box width="110px">
         <TextField
-          label="Disc"
-          type="number"
-          min={0}
-          max={100}
+          label="Discount"
+          type="text"
+          inputMode="decimal"
           suffix="%"
           autoComplete="off"
           value={valOf("disc")}
@@ -1124,11 +1150,11 @@ function DiscountCalc({
           onBlur={onBlur}
         />
       </Box>
-      <Box width="108px">
+      <Box width="120px">
         <TextField
           label="Save"
-          type="number"
-          min={0}
+          type="text"
+          inputMode="decimal"
           autoComplete="off"
           value={valOf("save")}
           onChange={(v) => onF("save", v)}
@@ -1140,84 +1166,115 @@ function DiscountCalc({
 }
 
 /**
- * Bundle pricing — ONE discount on the whole kit. Shows each part's original
- * price (main + accessories subtotal) and the combined original, then a single
- * three-way calculator (new total / disc% / save) that sets the bundle's one
- * discount, applied uniformly to the main and every accessory.
+ * Bundle pricing — ONE discount on the whole kit. A line per part shows its
+ * true original (MSRP / compare-at), its current selling price, and any
+ * pre-existing sale. Below: the MSRP total, the current total, then a single
+ * three-way calculator that sets the bundle discount (applied on top of the
+ * current selling prices, to the main and every accessory).
  */
 function BundleTotals({
   group,
-  mainPrice,
-  mainOrig,
-  accOrig,
+  lines,
   currency,
   onChange,
 }: {
   group: AddonGroup;
-  mainPrice: number | null;
-  mainOrig: number;
-  accOrig: number;
+  lines: { label: string; orig: number; now: number }[];
   currency: string;
   onChange: (patch: Partial<AddonGroup>) => void;
 }) {
-  const orig = mainOrig + accOrig;
-  const pct = clampPercent(group.discountPercent);
-  const next = orig * (1 - pct / 100);
-  const saved = orig - next;
+  const totalOrig = lines.reduce((s, l) => s + l.orig, 0); // Σ MSRP
+  const totalNow = lines.reduce((s, l) => s + l.now, 0); // Σ current selling
+  const preOffPct = totalOrig > 0 ? ((totalOrig - totalNow) / totalOrig) * 100 : 0;
+  const pct = clampPercent(group.discountPercent); // our bundle discount
+  const bundlePrice = totalNow * (1 - pct / 100);
+  const bundleSave = totalNow - bundlePrice;
+  const cell = (text: string, strong?: boolean) => (
+    <Text as="span" variant={strong ? "bodyMd" : "bodySm"} tone={strong ? undefined : "subdued"}>
+      {text}
+    </Text>
+  );
+  const totalRow = (label: string, value: string, strong?: boolean) => (
+    <InlineStack align="space-between" blockAlign="center">
+      {cell(label, strong)}
+      {cell(value, strong)}
+    </InlineStack>
+  );
   return (
     <Box background="bg-surface-secondary" padding="300" borderRadius="200">
       <BlockStack gap="200">
-        {mainPrice != null && (
-          <InlineStack align="space-between">
-            <Text as="span" variant="bodySm" tone="subdued">
-              Main product
-            </Text>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {fmtMoney(mainOrig, currency)}
-            </Text>
-          </InlineStack>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto auto auto",
+            columnGap: "20px",
+            rowGap: "6px",
+            alignItems: "baseline",
+          }}
+        >
+          <Text as="span" variant="bodySm" tone="subdued">
+            Product
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued" alignment="end">
+            Original
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued" alignment="end">
+            Now
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued" alignment="end">
+            Already off
+          </Text>
+          {lines.map((l, i) => {
+            const off = l.orig > l.now ? ((l.orig - l.now) / l.orig) * 100 : 0;
+            return (
+              <Fragment key={i}>
+                <Text as="span" variant="bodySm">
+                  {l.label}
+                </Text>
+                <Text as="span" variant="bodySm" tone="subdued" alignment="end">
+                  {fmtMoney(l.orig, currency)}
+                </Text>
+                <Text as="span" variant="bodySm" alignment="end">
+                  {fmtMoney(l.now, currency)}
+                </Text>
+                <Text as="span" variant="bodySm" tone="subdued" alignment="end">
+                  {off > 0 ? `${pctStr(off)}%` : "—"}
+                </Text>
+              </Fragment>
+            );
+          })}
+        </div>
+
+        <Divider />
+
+        {totalRow("Original total (MSRP)", fmtMoney(totalOrig, currency))}
+        {totalRow(
+          preOffPct > 0.05
+            ? `Current total (already ${pctStr(preOffPct)}% off)`
+            : "Current total",
+          fmtMoney(totalNow, currency),
+          true,
         )}
-        <InlineStack align="space-between">
-          <Text as="span" variant="bodySm" tone="subdued">
-            Accessories
-          </Text>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {fmtMoney(accOrig, currency)}
-          </Text>
-        </InlineStack>
-        <InlineStack align="space-between">
-          <Text as="span" variant="bodyMd">
-            Original total
-          </Text>
-          <Text as="span" variant="bodyMd">
-            {fmtMoney(orig, currency)}
-          </Text>
-        </InlineStack>
 
         <Divider />
 
         <BlockStack gap="100">
           <Text as="span" variant="headingSm">
-            Buy together
+            Buy together — one bundle discount
           </Text>
           <DiscountCalc
-            price={orig}
+            price={totalNow}
             percent={pct}
             onChangePercent={(p) => onChange({ discountPercent: clampPercent(p) })}
           />
-          {saved > 0 && (
-            <InlineStack align="start">
-              <Badge tone="success">
-                {`Now ${fmtMoney(next, currency)} · save ${fmtMoney(
-                  saved,
-                  currency,
-                )} (${pctStr(pct)}% off)`}
-              </Badge>
-            </InlineStack>
-          )}
         </BlockStack>
+
+        {totalRow("Bundle price", fmtMoney(bundlePrice, currency), true)}
+        {totalRow("Bundle discount", `${pctStr(pct)}%`)}
+        {totalRow("You save", fmtMoney(bundleSave, currency))}
         <Text as="span" variant="bodySm" tone="subdued">
-          One discount on the whole kit — main and every accessory.
+          The bundle discount applies on top of current prices — to the main and
+          every accessory.
         </Text>
       </BlockStack>
     </Box>
