@@ -699,7 +699,7 @@ function GroupCard({
         </InlineStack>
 
         <InlineStack gap="400" wrap={false} blockAlign="start">
-          <Box width="65%">
+          <Box width={isBundle ? "100%" : "65%"}>
             <TextField
               label={isFree ? "Section title" : "Card / tab title"}
               autoComplete="off"
@@ -714,24 +714,26 @@ function GroupCard({
               }
             />
           </Box>
-          <Box width="35%">
-            <TextField
-              label={isBundle ? "Group discount %" : "Group discount %"}
-              type="number"
-              min={0}
-              max={100}
-              autoComplete="off"
-              suffix="%"
-              disabled={isFree}
-              value={String(isFree ? 100 : group.discountPercent)}
-              onChange={(v) => onChange({ discountPercent: clampPercent(v) })}
-              helpText={
-                isFree
-                  ? "Free gifts are 100% off."
-                  : "Default for accessories without their own %."
-              }
-            />
-          </Box>
+          {!isBundle && (
+            <Box width="35%">
+              <TextField
+                label="Group discount %"
+                type="number"
+                min={0}
+                max={100}
+                autoComplete="off"
+                suffix="%"
+                disabled={isFree}
+                value={String(isFree ? 100 : group.discountPercent)}
+                onChange={(v) => onChange({ discountPercent: clampPercent(v) })}
+                helpText={
+                  isFree
+                    ? "Free gifts are 100% off."
+                    : "Default for accessories without their own %."
+                }
+              />
+            </Box>
+          )}
         </InlineStack>
 
         {isBundle && (
@@ -888,39 +890,6 @@ function GroupCard({
                   ? "Offered as the main-product options inside the bundle — the customer picks one (synced with the product page selector)."
                   : "This add-on group only shows when the selected main variant is one of these — otherwise it's hidden."}
               </Text>
-            </BlockStack>
-          </Box>
-        )}
-
-        {isBundle && (
-          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-            <BlockStack gap="200">
-              <Checkbox
-                label="Discount the main product too"
-                helpText="Off = main stays full price, only accessories discount. On = the whole kit (main + accessories) can be priced down."
-                checked={!!group.discountMain}
-                onChange={(v) =>
-                  onChange(
-                    v
-                      ? {
-                          discountMain: true,
-                          mainDiscountPercent: clampPercent(
-                            group.mainDiscountPercent ?? group.discountPercent,
-                          ),
-                        }
-                      : { discountMain: false },
-                  )
-                }
-              />
-              {group.discountMain && mainPrice != null && (
-                <DiscountCalc
-                  price={mainPrice}
-                  percent={mainPct}
-                  onChangePercent={(pct) =>
-                    onChange({ mainDiscountPercent: pct })
-                  }
-                />
-              )}
             </BlockStack>
           </Box>
         )}
@@ -1109,11 +1078,15 @@ function GroupCard({
 
         {isBundle && group.accessories.length > 0 && haveAllPrices && (
           <BundleTotals
+            group={group}
             mainPrice={mainPrice}
+            mainOrig={mainOrig}
             mainNew={mainNew}
+            mainPct={mainPct}
             accOrig={accOrig}
             accNew={accNew}
             currency={currency}
+            onChange={onChange}
             onAdjustTotal={applyTotalTarget}
           />
         )}
@@ -1208,31 +1181,44 @@ function DiscountCalc({
   );
 }
 
+/**
+ * Integrated bundle pricing. ONE place for the whole-bundle discount: the
+ * "Bundle total" is itself a three-way calculator (new total / disc% / save)
+ * that spreads a uniform discount across the kit; the per-accessory rows above
+ * can still override individual items. Below it, the "discount the main too"
+ * toggle decides whether the main joins the discount (otherwise it's the floor).
+ */
 function BundleTotals({
+  group,
   mainPrice,
+  mainOrig,
   mainNew,
+  mainPct,
   accOrig,
   accNew,
   currency,
+  onChange,
   onAdjustTotal,
 }: {
+  group: AddonGroup;
   mainPrice: number | null;
+  mainOrig: number;
   mainNew: number;
+  mainPct: number;
   accOrig: number;
   accNew: number;
   currency: string;
+  onChange: (patch: Partial<AddonGroup>) => void;
   onAdjustTotal: (target: number) => void;
 }) {
-  const main = mainPrice ?? 0;
-  const orig = main + accOrig;
+  const orig = mainOrig + accOrig;
   const next = mainNew + accNew;
   const saved = orig - next;
-  const pct = orig > 0 ? Math.round((saved / orig) * 1000) / 10 : 0;
-  const mainDiscounted = mainNew < main - 0.005;
-  const [target, setTarget] = useState("");
+  const headlinePct = orig > 0 ? (saved / orig) * 100 : 0;
+  const mainDiscounted = mainNew < mainOrig - 0.005;
   return (
     <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-      <BlockStack gap="150">
+      <BlockStack gap="200">
         {mainPrice != null && (
           <InlineStack align="space-between">
             <Text as="span" variant="bodySm" tone="subdued">
@@ -1241,10 +1227,11 @@ function BundleTotals({
             <Text as="span" variant="bodySm" tone="subdued">
               {mainDiscounted ? (
                 <>
-                  <s>{fmtMoney(main, currency)}</s> {fmtMoney(mainNew, currency)}
+                  <s>{fmtMoney(mainOrig, currency)}</s>{" "}
+                  {fmtMoney(mainNew, currency)}
                 </>
               ) : (
-                fmtMoney(main, currency)
+                fmtMoney(mainOrig, currency)
               )}
             </Text>
           </InlineStack>
@@ -1257,52 +1244,62 @@ function BundleTotals({
             {fmtMoney(accNew, currency)}
           </Text>
         </InlineStack>
+
         <Divider />
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="span" variant="headingSm">
-            Bundle total
-          </Text>
-          <InlineStack gap="200" blockAlign="center">
+
+        <InlineStack align="space-between" blockAlign="end" wrap>
+          <BlockStack gap="050">
+            <Text as="span" variant="headingSm">
+              Bundle total
+            </Text>
             {saved > 0 && (
               <Text as="span" variant="bodySm" tone="subdued">
-                <s>{fmtMoney(orig, currency)}</s>
+                <s>{fmtMoney(orig, currency)}</s> · save{" "}
+                {fmtMoney(saved, currency)} ({pctStr(headlinePct)}% off)
               </Text>
             )}
-            <Text as="span" variant="headingMd">
-              {fmtMoney(next, currency)}
-            </Text>
-          </InlineStack>
+          </BlockStack>
+          <DiscountCalc
+            price={orig}
+            percent={headlinePct}
+            onChangePercent={(h) => onAdjustTotal(orig * (1 - h / 100))}
+          />
         </InlineStack>
-        {saved > 0 && (
-          <InlineStack align="end">
-            <Badge tone="success">
-              {`Save ${fmtMoney(saved, currency)} (${pct}% off)`}
-            </Badge>
+        <Text as="span" variant="bodySm" tone="subdued">
+          Spreads one discount across the kit. Per-item edits above override it.
+        </Text>
+
+        <Divider />
+
+        <Checkbox
+          label="Discount the main product too"
+          helpText="Off = main stays full price (the floor for the total). On = the main joins the discount, so the whole kit can be priced down."
+          checked={!!group.discountMain}
+          onChange={(v) =>
+            onChange(
+              v
+                ? {
+                    discountMain: true,
+                    mainDiscountPercent: clampPercent(
+                      group.mainDiscountPercent ?? group.discountPercent,
+                    ),
+                  }
+                : { discountMain: false },
+            )
+          }
+        />
+        {group.discountMain && mainPrice != null && (
+          <InlineStack gap="200" blockAlign="end" wrap>
+            <Text as="span" variant="bodySm" tone="subdued">
+              Main product
+            </Text>
+            <DiscountCalc
+              price={mainPrice}
+              percent={mainPct}
+              onChangePercent={(pct) => onChange({ mainDiscountPercent: pct })}
+            />
           </InlineStack>
         )}
-        <Divider />
-        <InlineStack gap="200" blockAlign="end" wrap={false}>
-          <Box width="160px">
-            <TextField
-              label="Set bundle total"
-              type="number"
-              min={0}
-              autoComplete="off"
-              value={target}
-              onChange={setTarget}
-              helpText="Spreads the discount across items."
-            />
-          </Box>
-          <Button
-            onClick={() => {
-              const t = Number(target);
-              if (Number.isFinite(t)) onAdjustTotal(t);
-              setTarget("");
-            }}
-          >
-            Apply
-          </Button>
-        </InlineStack>
       </BlockStack>
     </Box>
   );
