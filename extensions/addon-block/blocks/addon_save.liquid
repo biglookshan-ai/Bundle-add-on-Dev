@@ -21,7 +21,10 @@
     {%- comment -%} "Bundle & Save" — each bundle group is ONE named, expandable card.
        A bundle with a live limited-time offer shows a countdown inside its card. {%- endcomment -%}
     <div class="cgp-addon__bundles" data-cgp-bundles hidden>
-      <h2 class="cgp-addon__heading">{{ block.settings.bundle_heading | escape }}</h2>
+      <div class="cgp-addon__sec-head">
+        <h2 class="cgp-addon__heading">{{ block.settings.bundle_heading | escape }}</h2>
+        <div class="cgp-addon__counter" data-cgp-bundle-counter></div>
+      </div>
       <div class="cgp-addon__bundle-list" data-cgp-bundle-list></div>
     </div>
 

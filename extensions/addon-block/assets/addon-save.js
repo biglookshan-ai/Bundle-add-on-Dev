@@ -177,6 +177,7 @@
       cta: root.querySelector("[data-cgp-cta]"),
       summaryEl: root.querySelector("[data-cgp-summary]"),
       counterEl: root.querySelector("[data-cgp-counter]"),
+      bundleCounterEl: root.querySelector("[data-cgp-bundle-counter]"),
       extras: new Map(), // key -> { kind, percent, items: [{id, price}] }
       freeItems: [], // { productId, title, current() } auto-added free gifts
       resetFns: [], // visual de-selectors, run after a successful add
@@ -242,6 +243,7 @@
             'variant-selects, variant-radios, .product-form__input, form[action*="/cart/add"]',
           )
         ) {
+          holdScroll(600); // theme re-renders media async on variant change
           setTimeout(function () {
             ctx.mainVarSync.forEach(function (fn) {
               try {
@@ -354,6 +356,19 @@
     return String(s).replace(/["\\]/g, "\\$&");
   }
 
+  // Pin the page scroll to its current Y for a short window. Driving the
+  // theme's variant picker makes Dawn re-render the media/info section
+  // asynchronously, which nudges the page down; a one-frame restore isn't
+  // enough, so we re-pin every frame until the re-render settles.
+  function holdScroll(ms) {
+    var y = window.pageYOffset;
+    var until = Date.now() + (ms || 500);
+    (function loop() {
+      if (window.pageYOffset !== y) window.scrollTo(0, y);
+      if (Date.now() < until) requestAnimationFrame(loop);
+    })();
+  }
+
   function extrasCount(ctx) {
     var n = 0;
     ctx.extras.forEach(function (e) {
@@ -391,8 +406,10 @@
           name: e.title || "Bundle",
           percent: e.percent,
           offerId: e.offerId || null,
+          bid: e.bid || null,
           mainVariantId: e.mainVariantId || null,
           mainPrice: e.mainPrice || 0,
+          mainPercent: e.mainPercent || 0,
           items: e.items.map(function (it) {
             return { id: it.id, price: it.price, percent: itemPct(e, it) };
           }),
@@ -431,8 +448,8 @@
       total += discounted(it.price, it.percent);
     });
     plan.bundles.forEach(function (b) {
-      // bundle's own main (its variant price) + its discounted accessories
-      total += b.mainPrice || mv.price || 0;
+      // bundle's own main (discounted only if the bundle opts in) + accessories
+      total += discounted(b.mainPrice || mv.price || 0, b.mainPercent || 0);
       b.items.forEach(function (it) {
         count += 1;
         total += discounted(it.price, it.percent);
@@ -481,28 +498,56 @@
   }
 
   function updateCounter(ctx) {
-    if (!ctx.counterEl) return;
-    var n = 0,
-      total = 0;
-    ctx.extras.forEach(function (e) {
-      if (e.kind !== "addon") return;
-      e.items.forEach(function (it) {
-        n++;
-        total += discounted(it.price, itemPct(e, it));
+    if (ctx.counterEl) {
+      var n = 0,
+        total = 0;
+      ctx.extras.forEach(function (e) {
+        if (e.kind !== "addon") return;
+        e.items.forEach(function (it) {
+          n++;
+          total += discounted(it.price, itemPct(e, it));
+        });
       });
-    });
-    ctx.counterEl.innerHTML = "";
-    if (n > 0) {
-      ctx.counterEl.appendChild(
-        el(
-          "span",
-          "cgp-addon__counter-n",
-          "+" + n + " ADD-ON" + (n > 1 ? "S" : ""),
-        ),
-      );
-      ctx.counterEl.appendChild(
-        el("span", "cgp-addon__counter-price", money(total, ctx.currency)),
-      );
+      ctx.counterEl.innerHTML = "";
+      if (n > 0) {
+        ctx.counterEl.appendChild(
+          el(
+            "span",
+            "cgp-addon__counter-n",
+            "+" + n + " ADD-ON" + (n > 1 ? "S" : ""),
+          ),
+        );
+        ctx.counterEl.appendChild(
+          el("span", "cgp-addon__counter-price", money(total, ctx.currency)),
+        );
+      }
+    }
+    // Bundle counter mirrors the add-on one: count of selected bundles + their
+    // whole total (main full price + discounted accessories).
+    if (ctx.bundleCounterEl) {
+      var bn = 0,
+        btotal = 0;
+      ctx.extras.forEach(function (e) {
+        if (e.kind !== "bundle") return;
+        bn++;
+        btotal += discounted(e.mainPrice || 0, e.mainPercent || 0);
+        e.items.forEach(function (it) {
+          btotal += discounted(it.price, it.percent || 0);
+        });
+      });
+      ctx.bundleCounterEl.innerHTML = "";
+      if (bn > 0) {
+        ctx.bundleCounterEl.appendChild(
+          el(
+            "span",
+            "cgp-addon__counter-n",
+            "+" + bn + " BUNDLE" + (bn > 1 ? "S" : ""),
+          ),
+        );
+        ctx.bundleCounterEl.appendChild(
+          el("span", "cgp-addon__counter-price", money(btotal, ctx.currency)),
+        );
+      }
     }
   }
 
@@ -968,6 +1013,38 @@
         var om = offeredMainVar();
         return (om[0] && om[0].price) || mainVariant(ctx).price || 0;
       }
+      // The bundle's MAIN-product discount %: 0 unless this bundle opts into
+      // discounting the main too (`discountMain`).
+      function mainPercentOf() {
+        if (!group.discountMain) return 0;
+        var n = Number(group.mainDiscountPercent) || 0;
+        return Math.max(0, Math.min(100, n));
+      }
+      // Main thumbnail/row image — the chosen variant's own image when it has
+      // one, so switching the bundle's main variant updates the small picture.
+      function mainImg() {
+        var v = curMainVar();
+        if (v && v.featured_image) return v.featured_image.src || v.featured_image;
+        return (
+          (ctx.mainData &&
+            (ctx.mainData.featured_image ||
+              (ctx.mainData.images && ctx.mainData.images[0]))) ||
+          null
+        );
+      }
+      // Accessory thumbnail — chosen variant's own image when it has one, so
+      // switching an accessory variant updates its small picture too.
+      function accImg(p) {
+        var v = chosenVarFor(p);
+        if (v && v.featured_image) return v.featured_image.src || v.featured_image;
+        return p.featured_image || (p.images && p.images[0]);
+      }
+      // Accessory price for the chosen variant (else first available), so the
+      // displayed unit/total prices match exactly what gets added to the cart.
+      function accPriceVal(p) {
+        var v = chosenVarFor(p) || firstAvailableIn(offeredFor(p));
+        return v && v.price != null ? v.price : p.price;
+      }
 
       function bundleReady() {
         if (offeredMainVar().length > 1 && !chosenMainVar) return false;
@@ -1020,9 +1097,11 @@
           kind: "bundle",
           percent: 0, // each item carries its own percent
           offerId: offerId || null,
+          bid: group.id || null, // which bundle group (for main-line discount)
           title: group.title || "Bundle",
           mainVariantId: mv ? mv.id : null,
           mainPrice: (mv && mv.price) || 0,
+          mainPercent: mainPercentOf(), // 0 unless this bundle discounts the main
           items: products.map(function (p) {
             var v = chosenVarFor(p) || firstAvailableIn(offeredFor(p));
             return {
@@ -1057,7 +1136,19 @@
         }
       });
 
+      // Rebuilding the card (innerHTML reset) can nudge the page scroll —
+      // switching a variant repeatedly would creep it downward. Pin scrollY
+      // around the rebuild so the bundle stays put.
       function paint() {
+        var sy = window.pageYOffset;
+        paintBody();
+        if (window.pageYOffset !== sy) window.scrollTo(0, sy);
+        requestAnimationFrame(function () {
+          if (window.pageYOffset !== sy) window.scrollTo(0, sy);
+        });
+      }
+
+      function paintBody() {
         var state = hasLimited ? offerState(group) : "active";
         if (timer) {
           clearInterval(timer);
@@ -1089,15 +1180,18 @@
         var accNow = 0,
           accWas = 0;
         products.forEach(function (p) {
-          accWas += p.price;
-          accNow += discounted(p.price, itemPercentFor(p, state));
+          var base = accPriceVal(p);
+          accWas += base;
+          accNow += discounted(base, itemPercentFor(p, state));
         });
-        // The bundle shows its WHOLE total (main full price + accessories);
-        // only accessories are discounted, so the saving is the accessory saving.
-        var mainPrice = mainPriceVal();
-        var totalNow = mainPrice + accNow;
-        var totalWas = mainPrice + accWas;
-        var saved = accWas - accNow;
+        // The bundle shows its WHOLE total (main + accessories). The main is
+        // full price unless this bundle opts into discounting the main too.
+        var mainWas = mainPriceVal();
+        var mainPct = mainPercentOf();
+        var mainNow = discounted(mainWas, mainPct);
+        var totalNow = mainNow + accNow;
+        var totalWas = mainWas + accWas;
+        var saved = totalWas - totalNow;
         var hasSaving = saved > 0;
 
         // HEAD (selectable): name (+ inline countdown badge) / one-line price /
@@ -1157,7 +1251,7 @@
           .forEach(function (p) {
             if (!p) return;
             var t = el("span", "cgp-bundle__thumb-sm");
-            var img = p.featured_image || (p.images && p.images[0]);
+            var img = p === ctx.mainData ? mainImg() : accImg(p);
             if (img) {
               var im = el("img");
               im.src = img;
@@ -1221,17 +1315,29 @@
             var mainSel =
               om.length > 1
                 ? variantSelect(om, chosenMainVar && chosenMainVar.id, function (v) {
+                    holdScroll(600); // Dawn re-renders media async; keep page put
                     chosenMainVar = v;
                     if (v) selectMainVariant(ctx, v.id); // sync to the page picker
-                    if (selected && !bundleReady()) {
-                      setSelected(false, state, offerIdFor(state));
-                      return;
+                    if (selected) {
+                      // Keep the cart selection in sync with the new variant.
+                      if (bundleReady()) storeSelection(state, offerIdFor(state));
+                      else setSelected(false, state, offerIdFor(state));
                     }
                     paint();
+                    ctx.onChange(); // refresh totals above the Add-to-cart button
                   })
                 : null;
             listEl.appendChild(
-              contentRow(ctx, ctx.mainData, 0, "Your product", true, mainSel),
+              contentRow(
+                ctx,
+                ctx.mainData,
+                mainPercentOf(),
+                "Current product",
+                true,
+                mainSel,
+                mainImg(),
+                mainPriceVal(),
+              ),
             );
           }
           products.forEach(function (p) {
@@ -1244,10 +1350,12 @@
                       if (bundleReady()) storeSelection(state, offerIdFor(state));
                       else setSelected(false, state, offerIdFor(state));
                     }
+                    paint(); // refresh this accessory's thumbnail + price
+                    ctx.onChange(); // refresh totals above the Add-to-cart button
                   })
                 : null;
             listEl.appendChild(
-              contentRow(ctx, p, itemPercentFor(p, state), null, false, sel),
+              contentRow(ctx, p, itemPercentFor(p, state), null, false, sel, accImg(p), accPriceVal(p)),
             );
           });
         }
@@ -1298,12 +1406,13 @@
     });
   }
 
-  function contentRow(ctx, data, percent, tag, isMain, sel) {
+  function contentRow(ctx, data, percent, tag, isMain, sel, imgOverride, priceOverride) {
+    var basePrice = priceOverride != null ? priceOverride : data.price;
     var row = el("div", "cgp-bundle__content-row");
     var link = !isMain && data.handle ? "/products/" + data.handle : null;
     var thumb = el(link ? "a" : "div", "cgp-bundle__content-thumb");
     if (link) thumb.href = link;
-    var img = data.featured_image || (data.images && data.images[0]);
+    var img = imgOverride || data.featured_image || (data.images && data.images[0]);
     if (img) {
       var im = el("img");
       im.src = img;
@@ -1326,11 +1435,11 @@
       el(
         "span",
         "cgp-bundle__now",
-        money(discounted(data.price, percent), ctx.currency),
+        money(discounted(basePrice, percent), ctx.currency),
       ),
     );
     if (percent > 0 && ctx.showStrike) {
-      p.appendChild(el("span", "cgp-bundle__was", money(data.price, ctx.currency)));
+      p.appendChild(el("span", "cgp-bundle__was", money(basePrice, ctx.currency)));
     }
     row.appendChild(p);
     return row;
@@ -1566,6 +1675,7 @@
           var props = function (extra) {
             var p = { _cgp_grp: grp, _cgp_n: n, Bundle: b.name };
             if (b.offerId) p._cgp_lo = b.offerId;
+            if (b.bid) p._cgp_bid = b.bid; // which bundle group (main discount)
             if (extra) for (var k in extra) p[k] = extra[k];
             return p;
           };

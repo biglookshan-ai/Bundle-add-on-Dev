@@ -44,6 +44,7 @@ import {
   displayCode,
   formLabel,
   effectiveAccessoryPercent,
+  effectiveMainPercent,
   type AddonConfig,
   type AddonGroup,
   type AddonAccessory,
@@ -107,6 +108,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     } else if (g.type !== "bundle") {
       delete base.limited;
       delete base.offerId;
+      delete base.discountMain;
+      delete base.mainDiscountPercent;
+    }
+    if (g.type === "bundle" && g.discountMain) {
+      base.discountMain = true;
+      base.mainDiscountPercent = clampPercent(g.mainDiscountPercent);
+    } else if (g.type === "bundle") {
+      delete base.discountMain;
+      delete base.mainDiscountPercent;
     }
     return base;
   });
@@ -626,7 +636,11 @@ function GroupCard({
       offerId: group.offerId || newOfferId(),
     });
 
-  // Bundle totals (main full price + discounted accessories).
+  // Bundle totals. The main is full price unless this bundle opts into
+  // discounting the main too (`discountMain`).
+  const mainOrig = mainPrice ?? 0;
+  const mainPct = effectiveMainPercent(group);
+  const mainNew = mainOrig * (1 - mainPct / 100);
   const accOrig = group.accessories.reduce(
     (s, a) => s + (prices[a.productId] ?? 0),
     0,
@@ -638,6 +652,28 @@ function GroupCard({
   const haveAllPrices = group.accessories.every(
     (a) => prices[a.productId] != null,
   );
+
+  // "Set bundle total" — back out a uniform discount that hits the target, clear
+  // per-item overrides so the whole bundle reads as one clean discount. The main
+  // joins the distribution only when `discountMain` is on (otherwise it's the
+  // floor: the total can't go below the main's full price).
+  const applyTotalTarget = (target: number) => {
+    const includeMain = !!group.discountMain;
+    const base = (includeMain ? mainOrig : 0) + accOrig;
+    if (base <= 0) return;
+    const floor = includeMain ? 0 : mainOrig;
+    const clamped = Math.min(Math.max(target, floor), floor + base);
+    const uniform = clampPercent(((base - (clamped - floor)) / base) * 100);
+    const patch: Partial<AddonGroup> = {
+      discountPercent: uniform,
+      accessories: group.accessories.map((a) => {
+        const { discountPercent: _omit, ...rest } = a;
+        return rest;
+      }),
+    };
+    if (includeMain) patch.mainDiscountPercent = uniform;
+    onChange(patch);
+  };
 
   return (
     <Card>
@@ -856,6 +892,39 @@ function GroupCard({
           </Box>
         )}
 
+        {isBundle && (
+          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+            <BlockStack gap="200">
+              <Checkbox
+                label="Discount the main product too"
+                helpText="Off = main stays full price, only accessories discount. On = the whole kit (main + accessories) can be priced down."
+                checked={!!group.discountMain}
+                onChange={(v) =>
+                  onChange(
+                    v
+                      ? {
+                          discountMain: true,
+                          mainDiscountPercent: clampPercent(
+                            group.mainDiscountPercent ?? group.discountPercent,
+                          ),
+                        }
+                      : { discountMain: false },
+                  )
+                }
+              />
+              {group.discountMain && mainPrice != null && (
+                <DiscountCalc
+                  price={mainPrice}
+                  percent={mainPct}
+                  onChangePercent={(pct) =>
+                    onChange({ mainDiscountPercent: pct })
+                  }
+                />
+              )}
+            </BlockStack>
+          </Box>
+        )}
+
         <Divider />
 
         <InlineStack align="space-between" blockAlign="center">
@@ -935,41 +1004,6 @@ function GroupCard({
                       </BlockStack>
                     </InlineStack>
 
-                    <InlineStack gap="300" blockAlign="center">
-                      {!isFree && (
-                        <Box width="92px">
-                          <TextField
-                            label="Override %"
-                            labelHidden
-                            type="number"
-                            min={0}
-                            max={100}
-                            suffix="%"
-                            autoComplete="off"
-                            placeholder={String(group.discountPercent)}
-                            value={
-                              a.discountPercent == null
-                                ? ""
-                                : String(a.discountPercent)
-                            }
-                            onChange={(v) =>
-                              onUpdateAccessory(a.productId, {
-                                discountPercent:
-                                  v === "" ? undefined : clampPercent(v),
-                              })
-                            }
-                          />
-                        </Box>
-                      )}
-                      <Box minWidth="78px">
-                        <Text as="span" variant="bodyMd" alignment="end">
-                          {isFree
-                            ? "FREE"
-                            : now != null
-                              ? fmtMoney(now, currency)
-                              : "—"}
-                        </Text>
-                      </Box>
                       <Button
                         icon={DeleteIcon}
                         variant="tertiary"
@@ -978,7 +1012,67 @@ function GroupCard({
                         onClick={() => onRemoveAccessory(a.productId)}
                       />
                     </InlineStack>
-                  </InlineStack>
+
+                    {isFree ? (
+                      <InlineStack align="end">
+                        <Text as="span" variant="bodyMd" tone="subdued">
+                          FREE
+                        </Text>
+                      </InlineStack>
+                    ) : price != null ? (
+                      <Box paddingInlineStart="800">
+                        <InlineStack
+                          align="space-between"
+                          blockAlign="end"
+                          wrap
+                        >
+                          <DiscountCalc
+                            price={price}
+                            percent={pct}
+                            onChangePercent={(p) =>
+                              onUpdateAccessory(a.productId, {
+                                discountPercent: p,
+                              })
+                            }
+                          />
+                          {a.discountPercent != null && (
+                            <Button
+                              variant="plain"
+                              onClick={() =>
+                                onUpdateAccessory(a.productId, {
+                                  discountPercent: undefined,
+                                })
+                              }
+                            >
+                              {`Reset to group ${pctStr(group.discountPercent)}%`}
+                            </Button>
+                          )}
+                        </InlineStack>
+                      </Box>
+                    ) : (
+                      <Box paddingInlineStart="800" width="120px">
+                        <TextField
+                          label="Discount %"
+                          type="number"
+                          min={0}
+                          max={100}
+                          suffix="%"
+                          autoComplete="off"
+                          placeholder={String(group.discountPercent)}
+                          value={
+                            a.discountPercent == null
+                              ? ""
+                              : String(a.discountPercent)
+                          }
+                          onChange={(v) =>
+                            onUpdateAccessory(a.productId, {
+                              discountPercent:
+                                v === "" ? undefined : clampPercent(v),
+                            })
+                          }
+                        />
+                      </Box>
+                    )}
 
                   {accVariants.length > 1 && (
                     <Box paddingInlineStart="800">
@@ -1016,9 +1110,11 @@ function GroupCard({
         {isBundle && group.accessories.length > 0 && haveAllPrices && (
           <BundleTotals
             mainPrice={mainPrice}
+            mainNew={mainNew}
             accOrig={accOrig}
             accNew={accNew}
             currency={currency}
+            onAdjustTotal={applyTotalTarget}
           />
         )}
       </BlockStack>
@@ -1026,32 +1122,130 @@ function GroupCard({
   );
 }
 
+/** Percent formatted without trailing zeros: 50, 52.6, 33.33. */
+function pctStr(p: number) {
+  return String(Math.round(p * 100) / 100);
+}
+
+/**
+ * Three linked fields — New price / Disc % / Save — for one price. Editing any
+ * one updates the other two; the source of truth is always the PERCENT (so it
+ * tracks Shopify price changes). The field being typed in keeps the raw text
+ * until blur so it doesn't fight the user as it reformats.
+ */
+function DiscountCalc({
+  price,
+  percent,
+  onChangePercent,
+}: {
+  price: number;
+  percent: number;
+  onChangePercent: (pct: number) => void;
+}) {
+  type Field = "price" | "disc" | "save";
+  const [active, setActive] = useState<Field | null>(null);
+  const [draft, setDraft] = useState("");
+  const newPrice = price * (1 - percent / 100);
+  const save = price - newPrice;
+  const disp: Record<Field, string> = {
+    price: newPrice.toFixed(2),
+    disc: pctStr(percent),
+    save: save.toFixed(2),
+  };
+  const valOf = (f: Field) => (active === f ? draft : disp[f]);
+  const onF = (f: Field, v: string) => {
+    setActive(f);
+    setDraft(v);
+    if (v === "") return;
+    const num = Number(v);
+    if (!Number.isFinite(num)) return;
+    const clampAmt = (n: number) => Math.min(Math.max(n, 0), price);
+    let pct = percent;
+    if (f === "price") pct = price > 0 ? ((price - clampAmt(num)) / price) * 100 : 0;
+    else if (f === "save") pct = price > 0 ? (clampAmt(num) / price) * 100 : 0;
+    else pct = num;
+    onChangePercent(clampPercent(pct));
+  };
+  const onBlur = () => setActive(null);
+  return (
+    <InlineStack gap="200" blockAlign="end" wrap={false}>
+      <Box width="108px">
+        <TextField
+          label="New price"
+          type="number"
+          min={0}
+          autoComplete="off"
+          value={valOf("price")}
+          onChange={(v) => onF("price", v)}
+          onBlur={onBlur}
+        />
+      </Box>
+      <Box width="78px">
+        <TextField
+          label="Disc"
+          type="number"
+          min={0}
+          max={100}
+          suffix="%"
+          autoComplete="off"
+          value={valOf("disc")}
+          onChange={(v) => onF("disc", v)}
+          onBlur={onBlur}
+        />
+      </Box>
+      <Box width="108px">
+        <TextField
+          label="Save"
+          type="number"
+          min={0}
+          autoComplete="off"
+          value={valOf("save")}
+          onChange={(v) => onF("save", v)}
+          onBlur={onBlur}
+        />
+      </Box>
+    </InlineStack>
+  );
+}
+
 function BundleTotals({
   mainPrice,
+  mainNew,
   accOrig,
   accNew,
   currency,
+  onAdjustTotal,
 }: {
   mainPrice: number | null;
+  mainNew: number;
   accOrig: number;
   accNew: number;
   currency: string;
+  onAdjustTotal: (target: number) => void;
 }) {
   const main = mainPrice ?? 0;
   const orig = main + accOrig;
-  const next = main + accNew;
+  const next = mainNew + accNew;
   const saved = orig - next;
-  const pct = orig > 0 ? Math.round((saved / orig) * 100) : 0;
+  const pct = orig > 0 ? Math.round((saved / orig) * 1000) / 10 : 0;
+  const mainDiscounted = mainNew < main - 0.005;
+  const [target, setTarget] = useState("");
   return (
     <Box background="bg-surface-secondary" padding="300" borderRadius="200">
       <BlockStack gap="150">
         {mainPrice != null && (
           <InlineStack align="space-between">
             <Text as="span" variant="bodySm" tone="subdued">
-              Main product (full price)
+              Main product{mainDiscounted ? "" : " (full price)"}
             </Text>
             <Text as="span" variant="bodySm" tone="subdued">
-              {fmtMoney(main, currency)}
+              {mainDiscounted ? (
+                <>
+                  <s>{fmtMoney(main, currency)}</s> {fmtMoney(mainNew, currency)}
+                </>
+              ) : (
+                fmtMoney(main, currency)
+              )}
             </Text>
           </InlineStack>
         )}
@@ -1086,6 +1280,29 @@ function BundleTotals({
             </Badge>
           </InlineStack>
         )}
+        <Divider />
+        <InlineStack gap="200" blockAlign="end" wrap={false}>
+          <Box width="160px">
+            <TextField
+              label="Set bundle total"
+              type="number"
+              min={0}
+              autoComplete="off"
+              value={target}
+              onChange={setTarget}
+              helpText="Spreads the discount across items."
+            />
+          </Box>
+          <Button
+            onClick={() => {
+              const t = Number(target);
+              if (Number.isFinite(t)) onAdjustTotal(t);
+              setTarget("");
+            }}
+          >
+            Apply
+          </Button>
+        </InlineStack>
       </BlockStack>
     </Box>
   );

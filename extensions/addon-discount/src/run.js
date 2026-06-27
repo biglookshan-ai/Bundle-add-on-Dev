@@ -40,6 +40,35 @@ function clampPercent(value) {
   return Math.min(100, Math.max(0, n));
 }
 
+/** Numeric tail of a gid, for tolerant variant id comparison. */
+function gidTail(id) {
+  return String(id ?? "").split("/").pop();
+}
+
+/**
+ * Does this add-on group apply to the given main variant?
+ * No restriction (empty mainVariantIds) = applies to every variant.
+ * Mirrors the storefront's show/hide rule so the discount cap can't be
+ * inflated by adding a non-participating variant to the cart.
+ */
+function groupAllowsVariant(group, variantId) {
+  const ids = group?.mainVariantIds;
+  if (!Array.isArray(ids) || ids.length === 0) return true;
+  const tail = gidTail(variantId);
+  return ids.some((g) => gidTail(g) === tail);
+}
+
+/** Find the bundle group with this group id inside a main's config. */
+function findBundleById(config, bid) {
+  if (!bid) return null;
+  const groups = Array.isArray(config?.groups) ? config.groups : [];
+  for (const group of groups) {
+    if (group?.archived) continue;
+    if (group?.type === "bundle" && group?.id === bid) return group;
+  }
+  return null;
+}
+
 /** Find the bundle group with this offerId inside a main's config. */
 function findBundleByOffer(config, offerId) {
   const groups = Array.isArray(config?.groups) ? config.groups : [];
@@ -94,13 +123,15 @@ export function run(input) {
   const mainConfigByGrp = new Map(); // tag -> backing main's config
   /** @type {Map<string, number>} */
   const mainQtyByGrp = new Map(); // tag -> backing main quantity
-  /** @type {Array<{config: any, mainQty: number}>} */
+  /** @type {Array<{config: any, mainQty: number, variantId: string|undefined}>} */
   const mainLines = [];
 
   for (const line of lines) {
-    const product = /** @type {any} */ (line?.merchandise)?.product;
+    const merch = /** @type {any} */ (line?.merchandise);
+    const product = merch?.product;
     const pid = product?.id;
     if (typeof pid !== "string") continue;
+    const variantId = merch?.id;
     const qty = Number(line?.quantity) || 0;
     presentQty.set(pid, (presentQty.get(pid) ?? 0) + qty);
 
@@ -114,15 +145,22 @@ export function run(input) {
       set.add(pid);
     }
 
+    // A line only acts as a MAIN (its config drives add-on/free/bundle prices)
+    // when it is NOT itself an accessory or a free gift. This matters when an
+    // accessory product is ALSO a configured main elsewhere: tagged `_addon_for`
+    // here, its own config must not overwrite its bundle main's config for the
+    // shared `_cgp_grp`, nor make its own add-ons eligible.
+    const isAccessory = !!(/** @type {any} */ (line)?.cgpFor?.value);
+    const isFreeGift = !!(/** @type {any} */ (line)?.cgpFree?.value);
     const raw = product?.addonConfig?.value;
-    if (raw) {
+    if (raw && !isAccessory && !isFreeGift) {
       let config;
       try {
         config = JSON.parse(raw);
       } catch {
         continue;
       }
-      mainLines.push({ config, mainQty: qty });
+      mainLines.push({ config, mainQty: qty, variantId });
       if (grp) {
         mainConfigByGrp.set(grp, config);
         mainQtyByGrp.set(grp, (mainQtyByGrp.get(grp) ?? 0) + qty);
@@ -189,7 +227,7 @@ export function run(input) {
   //    quantity to the allowance ONCE; bundle/free groups are handled separately.
   /** @type {Map<string, {percent: number, allowance: number}>} */
   const addonEligible = new Map();
-  for (const { config, mainQty } of mainLines) {
+  for (const { config, mainQty, variantId } of mainLines) {
     if (mainQty <= 0) continue;
     /** @type {Map<string, number>} */
     const lineBest = new Map();
@@ -197,6 +235,10 @@ export function run(input) {
     for (const group of groups) {
       if (group?.archived) continue;
       if (group?.type === "bundle" || group?.type === "free") continue;
+      // Only count this main toward the cap if its variant participates in the
+      // group. Otherwise a hidden-add-on variant (e.g. Kit4) would let extra
+      // add-on units sneak in at the discounted price.
+      if (!groupAllowsVariant(group, variantId)) continue;
       for (const accessory of group?.accessories ?? []) {
         const apid = accessory?.productId;
         if (typeof apid !== "string") continue;
@@ -245,13 +287,40 @@ export function run(input) {
     const product = /** @type {any} */ (line?.merchandise)?.product;
     const pid = product?.id;
     if (typeof pid !== "string") continue;
-    if (product?.addonConfig?.value) continue; // never discount a main product
 
     const lineQty = Number(line?.quantity) || 0;
     if (lineQty <= 0) continue;
 
     const grp = /** @type {any} */ (line)?.cgpGrp?.value;
     const lo = /** @type {any} */ (line)?.cgpLo?.value;
+    const addonFor = /** @type {any} */ (line)?.cgpFor?.value;
+    const free = /** @type {any} */ (line)?.cgpFree?.value;
+    const bid = /** @type {any} */ (line)?.cgpBid?.value;
+
+    // A MAIN line is normally never discounted. A main is any line NOT tagged as
+    // an accessory (`_addon_for`) or a free gift (`_cgp_free`) — the shared
+    // add-on main, a bundle's own main, or a plain product. We key off the tags
+    // (not the metafield) so a product that is itself a configured main can
+    // still be discounted when it appears as someone else's accessory.
+    if (!addonFor && !free) {
+      // EXCEPTION: a bundle's OWN main, when that bundle opts into discounting
+      // the main (`discountMain`). Same all-or-nothing gate as the accessories.
+      if (grp && bid) {
+        const config = mainConfigByGrp.get(grp);
+        const group = findBundleById(config, bid);
+        if (group && group.discountMain && allPresentUnder(group, presentByGrp.get(grp))) {
+          const pct = clampPercent(group.mainDiscountPercent);
+          if (pct > 0) {
+            discounts.push({
+              message: `Bundle ${pct}% off`,
+              targets: [{ cartLine: { id: line.id, quantity: lineQty } }],
+              value: { percentage: { value: pct.toFixed(1) } },
+            });
+          }
+        }
+      }
+      continue;
+    }
 
     if (grp) {
       // BUNDLE accessory (normal bundle, or a limited bundle's NORMAL/revert

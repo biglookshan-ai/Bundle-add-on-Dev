@@ -74,6 +74,15 @@ export type AddonGroup = {
    * to that main variant (image + price) and the cart adds that variant.
    */
   mainVariantIds?: string[];
+  /**
+   * Bundle only. When true, the MAIN product line is ALSO discounted (by
+   * `mainDiscountPercent`), so the whole kit — main + accessories — can be priced
+   * down (like a "whole kit X% off"). When false/undefined the main stays full
+   * price and only accessories discount. Enforced server-side in the Function.
+   */
+  discountMain?: boolean;
+  /** 0–100 discount applied to the bundle's MAIN line when `discountMain`. */
+  mainDiscountPercent?: number;
 
   /**
    * Soft-deleted. Archived groups are kept (so they can be restored / reused)
@@ -120,9 +129,11 @@ export function newCode() {
 }
 
 export function clampPercent(value: unknown): number {
-  const n = Math.round(Number(value));
+  const n = Number(value);
   if (!Number.isFinite(n)) return 0;
-  return Math.min(100, Math.max(0, n));
+  // Keep up to 2 decimals so a discount entered via a target PRICE (e.g. an
+  // exact "new price") round-trips closely instead of snapping to whole %.
+  return Math.round(Math.min(100, Math.max(0, n)) * 100) / 100;
 }
 
 /** Which of the four forms a group currently is. */
@@ -268,6 +279,12 @@ function parseAccessories(raw: any): AddonAccessory[] {
     : [];
 }
 
+/** A bundle's MAIN-product discount: its % when `discountMain`, else 0. */
+export function effectiveMainPercent(group: AddonGroup): number {
+  if (group.type !== "bundle" || !group.discountMain) return 0;
+  return clampPercent(group.mainDiscountPercent);
+}
+
 /** A bundle/add-on accessory's effective % = its override, else the group's. */
 export function effectiveAccessoryPercent(
   group: AddonGroup,
@@ -354,6 +371,10 @@ function migrateGroup(g: any): AddonGroup {
     if (limited?.enabled || (typeof g?.offerId === "string" && g.offerId)) {
       group.offerId =
         typeof g?.offerId === "string" && g.offerId ? g.offerId : newOfferId();
+    }
+    if (g?.discountMain) {
+      group.discountMain = true;
+      group.mainDiscountPercent = clampPercent(g?.mainDiscountPercent);
     }
   }
 

@@ -40,6 +40,11 @@ query RunInput {
       cgpLo: attribute(key: "_cgp_lo") {
         value
       }
+      # `_cgp_bid` names the bundle GROUP a line belongs to. Used to discount a
+      # bundle's OWN main line when that group opts into discounting the main.
+      cgpBid: attribute(key: "_cgp_bid") {
+        value
+      }
       merchandise {
         __typename
         ... on ProductVariant {
