@@ -303,13 +303,14 @@ export function run(input) {
     // (not the metafield) so a product that is itself a configured main can
     // still be discounted when it appears as someone else's accessory.
     if (!addonFor && !free) {
-      // EXCEPTION: a bundle's OWN main, when that bundle opts into discounting
-      // the main (`discountMain`). Same all-or-nothing gate as the accessories.
+      // EXCEPTION: a bundle's OWN main. A bundle is one discount on the whole
+      // kit, so the main gets the same `discountPercent` as the accessories,
+      // gated on the full kit being present (all-or-nothing).
       if (grp && bid) {
         const config = mainConfigByGrp.get(grp);
         const group = findBundleById(config, bid);
-        if (group && group.discountMain && allPresentUnder(group, presentByGrp.get(grp))) {
-          const pct = clampPercent(group.mainDiscountPercent);
+        if (group && allPresentUnder(group, presentByGrp.get(grp))) {
+          const pct = clampPercent(group.discountPercent);
           if (pct > 0) {
             discounts.push({
               message: `Bundle ${pct}% off`,

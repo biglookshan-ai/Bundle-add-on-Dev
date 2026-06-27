@@ -1013,11 +1013,10 @@
         var om = offeredMainVar();
         return (om[0] && om[0].price) || mainVariant(ctx).price || 0;
       }
-      // The bundle's MAIN-product discount %: 0 unless this bundle opts into
-      // discounting the main too (`discountMain`).
+      // A bundle is ONE discount on the whole kit: the main gets the same % as
+      // the accessories (group discountPercent).
       function mainPercentOf() {
-        if (!group.discountMain) return 0;
-        var n = Number(group.mainDiscountPercent) || 0;
+        var n = Number(group.discountPercent) || 0;
         return Math.max(0, Math.min(100, n));
       }
       // Main thumbnail/row image — the chosen variant's own image when it has
