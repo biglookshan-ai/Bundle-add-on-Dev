@@ -350,16 +350,18 @@ export function run(input) {
           allPresentUnder(group, present)
         ) {
           const endMode = group.limited && group.limited.mode === "end";
-          best = endMode ? 0 : accPercent(group, pid);
+          // A bundle is ONE discount on the whole kit: the group %, not any
+          // per-accessory override (those are an add-on-only concept).
+          best = endMode ? 0 : clampPercent(group.discountPercent);
         }
       } else {
-        // Plain bundle line: best matching bundle group by membership, using
-        // this accessory's effective percent.
+        // Plain bundle line: best matching bundle group by membership, using the
+        // single group discount (one price for the whole kit).
         for (const group of config?.groups ?? []) {
           if (group?.type !== "bundle" || group?.archived) continue;
           if (!groupHasProduct(group, pid)) continue;
           if (!allPresentUnder(group, present)) continue;
-          const percent = accPercent(group, pid);
+          const percent = clampPercent(group.discountPercent);
           if (percent > best) best = percent;
         }
       }

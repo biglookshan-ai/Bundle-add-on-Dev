@@ -1087,7 +1087,10 @@
         if (hasLimited && state === "ended" && group.limited.mode !== "revert") {
           return 0;
         }
-        return accPercentFor(group, p.id);
+        // A bundle is ONE discount on the whole kit — the group %, same as the
+        // main. Per-accessory overrides are an add-on-only concept; ignore any
+        // stale ones so the cart/Function match this card exactly.
+        return Math.max(0, Math.min(100, Number(group.discountPercent) || 0));
       }
       // Tag `_cgp_lo` only while the offer is actually live, so the time-gated
       // node governs the price; after expiry the main node takes over.

@@ -113,6 +113,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       delete base.limited;
       delete base.offerId;
     }
+    // A bundle is one discount on the whole kit — drop any stale per-accessory
+    // overrides (an add-on-only concept) so the cart/Function match the editor.
+    if (g.type === "bundle") {
+      base.accessories = base.accessories.map((a) => {
+        const { discountPercent: _drop, ...rest } = a;
+        return rest;
+      });
+    }
     return base;
   });
 
