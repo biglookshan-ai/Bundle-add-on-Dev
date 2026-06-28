@@ -247,7 +247,7 @@ export default function ProductConfig() {
   const [priceMap, setPriceMap] = useState<Record<string, number>>(prices);
   const compareMap = compareAt;
   const [variantMap, setVariantMap] =
-    useState<Record<string, { id: string; title: string }[]>>(variants);
+    useState<Record<string, { id: string; title: string; price?: number; compareAt?: number }[]>>(variants);
   const [infoMap, setInfoMap] =
     useState<Record<string, { title: string; handle: string; image: string | null }>>(
       info,
@@ -349,7 +349,7 @@ export default function ProductConfig() {
       if (!picked) return;
       const prevById = new Map(existing.map((a) => [a.productId, a]));
       const captured: Record<string, number> = {};
-      const capturedVars: Record<string, { id: string; title: string }[]> = {};
+      const capturedVars: Record<string, { id: string; title: string; price?: number; compareAt?: number }[]> = {};
       const capturedInfo: Record<
         string,
         { title: string; handle: string; image: string | null }
@@ -608,9 +608,9 @@ function GroupCard({
   group: AddonGroup;
   prices: Record<string, number>;
   compareAt: Record<string, number>;
-  variants: Record<string, { id: string; title: string }[]>;
+  variants: Record<string, { id: string; title: string; price?: number; compareAt?: number }[]>;
   info: Record<string, { title: string; handle: string; image: string | null }>;
-  mainVariants: { id: string; title: string }[];
+  mainVariants: { id: string; title: string; price?: number; compareAt?: number }[];
   mainPrice: number | null;
   mainCompareAt: number | null;
   currency: string;
@@ -638,29 +638,52 @@ function GroupCard({
   const isBundle = group.type === "bundle";
   const limitedOn = isBundle && Boolean(group.limited?.enabled);
 
-  // Bundle = ONE discount on the whole kit: the same `discountPercent` hits the
-  // main and every accessory. Each line carries its TRUE original (compare-at,
-  // `orig`) and its current Shopify selling price (`now`, already discounted if
-  // the product is on sale). Our bundle discount applies on top of `now`.
+  // Bundle = ONE discount on the whole kit. Each line carries its TRUE original
+  // (compare-at, `orig`) and its current Shopify selling price (`now`). The
+  // representative is the FIRST variant actually OFFERED to the customer (so a
+  // cheaper, non-offered variant doesn't skew the estimate) — matching what the
+  // storefront defaults to. Falls back to the product-level price if needed.
+  const repFromOffered = (
+    vs: { id: string; title: string; price?: number; compareAt?: number }[],
+    offeredIds: string[] | undefined,
+    fallbackNow: number,
+    fallbackOrig: number,
+  ): { now: number; orig: number } => {
+    const offered =
+      offeredIds && offeredIds.length
+        ? vs.filter((v) => offeredIds.includes(v.id))
+        : vs;
+    const v = offered[0] || vs[0];
+    if (v && typeof v.price === "number") {
+      return { now: v.price, orig: v.compareAt ?? v.price };
+    }
+    return { now: fallbackNow, orig: fallbackOrig };
+  };
   const haveAllPrices = group.accessories.every(
     (a) => prices[a.productId] != null,
   );
+  const mainRep = repFromOffered(
+    mainVariants,
+    group.mainVariantIds,
+    mainPrice ?? 0,
+    mainCompareAt ?? mainPrice ?? 0,
+  );
   const bundleLines: { label: string; orig: number; now: number }[] = [
     ...(mainPrice != null
-      ? [
-          {
-            label: "Main product",
-            orig: mainCompareAt ?? mainPrice,
-            now: mainPrice,
-          },
-        ]
+      ? [{ label: "Main product", orig: mainRep.orig, now: mainRep.now }]
       : []),
     ...group.accessories.map((a) => {
-      const now = prices[a.productId] ?? 0;
+      const fb = prices[a.productId] ?? 0;
+      const rep = repFromOffered(
+        variants[a.productId] || [],
+        a.variantIds,
+        fb,
+        compareAt[a.productId] ?? fb,
+      );
       return {
         label: info[a.productId]?.title || a.title || a.handle,
-        orig: compareAt[a.productId] ?? now,
-        now,
+        orig: rep.orig,
+        now: rep.now,
       };
     }),
   ];
@@ -786,14 +809,22 @@ function GroupCard({
         {group.accessories.length > 0 ? (
           <BlockStack gap="200">
             {group.accessories.map((a) => {
-              const price = prices[a.productId];
-              const pct = effectiveAccessoryPercent(group, a);
-              const now = price != null ? price * (1 - pct / 100) : null;
               const accVariants = variants[a.productId] || [];
               const offeredIds =
                 a.variantIds && a.variantIds.length
                   ? a.variantIds
                   : accVariants.map((v) => v.id);
+              // Show the FIRST offered variant's price (what the storefront
+              // defaults to), not the cheapest non-offered one.
+              const repV =
+                accVariants.find((v) => offeredIds.includes(v.id)) ||
+                accVariants[0];
+              const price =
+                typeof repV?.price === "number"
+                  ? repV.price
+                  : prices[a.productId];
+              const pct = effectiveAccessoryPercent(group, a);
+              const now = price != null ? price * (1 - pct / 100) : null;
               const toggleVariant = (vid: string) => {
                 const next = offeredIds.includes(vid)
                   ? offeredIds.filter((x) => x !== vid)

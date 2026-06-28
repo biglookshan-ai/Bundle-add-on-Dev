@@ -165,7 +165,14 @@ async function clearMetafield(admin: AdminGraphql, productId: string) {
   );
 }
 
-export type VariantOption = { id: string; title: string };
+export type VariantOption = {
+  id: string;
+  title: string;
+  /** Selling price of this variant. */
+  price?: number;
+  /** True original (compare-at) of this variant; equals price when not on sale. */
+  compareAt?: number;
+};
 export type ProductMeta = { title: string; handle: string; image: string | null };
 
 /**
@@ -236,7 +243,11 @@ export async function fetchProductPrices(
       // pre-existing discount and the "original" equals the current price.
       compareAt[n.id] = repCompare > repPrice ? repCompare : repPrice;
     }
-    const vs = rawVariants.map((v: any) => ({ id: v.id, title: v.title }));
+    const vs = rawVariants.map((v: any) => {
+      const p = Number(v.price) || 0;
+      const c = Number(v.compareAtPrice) || 0;
+      return { id: v.id, title: v.title, price: p, compareAt: c > p ? c : p };
+    });
     if (vs.length) variants[n.id] = vs;
   }
   return { prices, compareAt, variants, info, currency };
