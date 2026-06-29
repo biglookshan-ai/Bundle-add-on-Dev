@@ -1,20 +1,10 @@
-# Input for the product-discount Function.
-#
-# For every cart line we read its quantity, the variant's product id, and the
-# product's `custom.addon_config` metafield. Lines whose product carries a
-# config are "main products"; the Function then discounts cart lines whose
-# product is a configured accessory of a main product that is also in the cart
-# — capping the discounted quantity and enforcing all-or-nothing bundles.
+# Input for the product-discount Function (add-on / bundle / free / gift).
+# Comments count toward the 3000-char input-query limit, so keep them short.
 query RunInput {
-  # When this run is for a LIMITED-offer node, the node carries an "offerId" in
-  # its app-reserved metafield; that's how one shared Function tells which offer
-  # (and time window) it is being invoked for. The main add-on node has none.
   discountNode {
     metafield(namespace: "$app:limited", key: "offer") {
       value
     }
-    # A GIFT-CAMPAIGN node carries its campaign rules (id, gift product ids,
-    # per-qualifying count) here. Present only on gift nodes.
     giftMeta: metafield(namespace: "$app:gift", key: "campaign") {
       value
     }
@@ -23,35 +13,21 @@ query RunInput {
     lines {
       id
       quantity
-      # `_cgp_grp` ties a bundle's main + its accessories to one kit instance, so
-      # removing that main reverts only that bundle's accessories to full price.
       cgpGrp: attribute(key: "_cgp_grp") {
         value
       }
-      # `_addon_for` marks a line that was added via the add-on flow. Add-on
-      # discounts apply only to these, so a plain product (or a reverted bundle
-      # item) stays full price even if its product is configured as an add-on.
       cgpFor: attribute(key: "_addon_for") {
         value
       }
-      # `_cgp_free` marks an auto-added free gift. It gets 100% off, hard-capped
-      # to ONE unit per gift product, only while its main is in the cart.
       cgpFree: attribute(key: "_cgp_free") {
         value
       }
-      # `_cgp_lo` marks a limited bundle line and names its offer. The limited
-      # node discounts it deeply inside the window; after expiry the main node
-      # applies the bundle's normal price (mode "revert") or nothing (mode "end").
       cgpLo: attribute(key: "_cgp_lo") {
         value
       }
-      # `_cgp_bid` names the bundle GROUP a line belongs to. Used to discount a
-      # bundle's OWN main line when that group opts into discounting the main.
       cgpBid: attribute(key: "_cgp_bid") {
         value
       }
-      # `_cgp_gift` marks a gift line and names the campaign it belongs to. The
-      # gift node gives it 100% off, capped to the unlocked allowance.
       cgpGift: attribute(key: "_cgp_gift") {
         value
       }
@@ -64,9 +40,6 @@ query RunInput {
             addonConfig: metafield(namespace: "custom", key: "addon_config") {
               value
             }
-            # Campaign ids this product TRIGGERS (a gift campaign gives a gift
-            # when one of its trigger products is in the cart). Stamped by the
-            # admin (collections are expanded to their products at save time).
             giftTrigger: metafield(namespace: "custom", key: "gift_trigger") {
               value
             }
