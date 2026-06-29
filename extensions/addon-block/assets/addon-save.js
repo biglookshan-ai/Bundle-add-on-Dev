@@ -57,43 +57,6 @@
     return String(id).split("/").pop();
   }
 
-  // Free-gift "declined" memory: once the customer removes a gift from the cart
-  // we don't auto-add it again (keyed by main + gift product id). Cleared when
-  // the main leaves the cart, so re-adding the main re-offers the gift.
-  var DECLINE_KEY = "cgp_declined_gifts";
-  function declinedList() {
-    try {
-      return JSON.parse(localStorage.getItem(DECLINE_KEY) || "[]") || [];
-    } catch (e) {
-      return [];
-    }
-  }
-  function declineKey(mainId, giftId) {
-    return String(mainId) + "|" + String(giftId);
-  }
-  function isDeclined(mainId, giftId) {
-    return declinedList().indexOf(declineKey(mainId, giftId)) >= 0;
-  }
-  function setDeclined(mainId, giftId) {
-    var list = declinedList();
-    var k = declineKey(mainId, giftId);
-    if (list.indexOf(k) < 0) {
-      list.push(k);
-      try {
-        localStorage.setItem(DECLINE_KEY, JSON.stringify(list));
-      } catch (e) {}
-    }
-  }
-  function clearDeclined(mainId, giftId) {
-    var k = declineKey(mainId, giftId);
-    var list = declinedList().filter(function (x) {
-      return x !== k;
-    });
-    try {
-      localStorage.setItem(DECLINE_KEY, JSON.stringify(list));
-    } catch (e) {}
-  }
-
   function firstAvailableIn(list) {
     return (
       list.filter(function (v) {
@@ -1780,10 +1743,8 @@
             });
           });
         });
-        // Free gifts ride along with the main, unless already in the cart OR the
-        // customer has removed it (declined) for this main.
+        // Free gifts ride along with the main, unless already in the cart.
         ctx.freeItems.forEach(function (f) {
-          if (isDeclined(ctx.mainProductId, f.productId)) return;
           var already = (state.items || []).some(function (it) {
             return (
               String(it.product_id) === f.productId &&
@@ -2160,29 +2121,9 @@
           });
         });
 
-        // Respect a removed gift: if the customer deletes a gift while its main
-        // stays in the cart, remember it (so we don't auto-add it again) instead
-        // of restoring it. When the main leaves the cart we forget the decline,
-        // so re-adding the main re-offers the gift.
-        freeReqs.forEach(function (req) {
-          var mainPresent = items.some(function (it) {
-            return String(it.product_id) === req.mainId;
-          });
-          if (!mainPresent) {
-            clearDeclined(req.mainId, req.giftProductId);
-            return;
-          }
-          var has = items.some(function (it) {
-            return (
-              it.properties &&
-              it.properties._cgp_free &&
-              String(it.product_id) === req.giftProductId &&
-              String(it.properties._cgp_free_for || "") === req.mainId &&
-              updates[it.key] !== 0
-            );
-          });
-          if (!has) setDeclined(req.mainId, req.giftProductId);
-        });
+        // NOTE: a gift the customer deletes is NOT auto-restored — once removed
+        // in the cart it stays gone. It can still be re-added by adding the kit
+        // again (commit re-adds a gift that isn't already in the cart).
 
         if (!Object.keys(updates).length && !adds.length) return;
 
