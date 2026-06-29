@@ -76,6 +76,13 @@ export type AddonGroup = {
   mainVariantIds?: string[];
 
   /**
+   * Add-on / free groups: hide a product on the storefront once it's sold out
+   * (no available offered variant). When every item in the group is sold out the
+   * whole group/tab disappears. Display-only — Shopify still blocks buying it.
+   */
+  hideWhenSoldOut?: boolean;
+
+  /**
    * Soft-deleted. Archived groups are kept (so they can be restored / reused)
    * but never shown on the storefront, never discount, and don't appear in the
    * active dashboard tabs. Only a permanent delete drops them.
@@ -365,6 +372,8 @@ function migrateGroup(g: any): AddonGroup {
     const ids = g.mainVariantIds.filter((x: any) => typeof x === "string" && x);
     if (ids.length) group.mainVariantIds = ids;
   }
+
+  if (g?.hideWhenSoldOut) group.hideWhenSoldOut = true;
 
   return group;
 }

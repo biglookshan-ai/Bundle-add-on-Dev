@@ -90,6 +90,24 @@
     return all;
   }
 
+  // Stock helpers for the "hide when sold out" option (add-on / free groups).
+  function accInStock(group, data) {
+    return offeredVariants(group, data).some(function (v) {
+      return v.available;
+    });
+  }
+  function groupInStock(group) {
+    return Promise.all(
+      (group.accessories || []).map(function (a) {
+        return fetchProduct(a.handle);
+      }),
+    ).then(function (datas) {
+      return datas.some(function (d) {
+        return d && accInStock(group, d);
+      });
+    });
+  }
+
   // Effective % for one accessory in a group: its own override, else the group.
   function accPercentFor(group, productId) {
     var accs = (group && group.accessories) || [];
@@ -577,17 +595,32 @@
     ctx.gridEl = gridEl;
 
     function paintAddons() {
-      // Drop selections from groups that are now hidden so they aren't added.
-      groups.forEach(function (g) {
-        if (addonGroupVisible(ctx, g)) return;
-        (g.accessories || []).forEach(function (a) {
-          ctx.extras.delete("addon:" + gidTail(a.productId));
-        });
-      });
-
-      var visible = groups.filter(function (g) {
+      // Candidates = groups allowed for the current main variant. Then resolve
+      // each group's stock (async, cached) so a fully sold-out "hide when sold
+      // out" group drops out of the tabs entirely.
+      var byMain = groups.filter(function (g) {
         return addonGroupVisible(ctx, g);
       });
+      Promise.all(
+        byMain.map(function (g) {
+          return g.hideWhenSoldOut ? groupInStock(g) : Promise.resolve(true);
+        }),
+      ).then(function (stocks) {
+        var visible = byMain.filter(function (_g, i) {
+          return stocks[i];
+        });
+        // Drop selections from groups no longer shown (hidden or sold out).
+        groups.forEach(function (g) {
+          if (visible.indexOf(g) >= 0) return;
+          (g.accessories || []).forEach(function (a) {
+            ctx.extras.delete("addon:" + gidTail(a.productId));
+          });
+        });
+        paintVisible(visible);
+      });
+    }
+
+    function paintVisible(visible) {
       if (!visible.length) {
         wrap.hidden = true;
         tabsEl.innerHTML = "";
@@ -640,6 +673,8 @@
       var rows = [];
       datas.forEach(function (data) {
         if (!data) return;
+        // "Hide when sold out": drop accessories with no available variant.
+        if (group.hideWhenSoldOut && !accInStock(group, data)) return;
         var row = renderRow(ctx, group, data);
         rowsWrap.appendChild(row);
         rows.push(row);
@@ -1505,21 +1540,30 @@
   function renderFree(ctx, groups, root) {
     var wrap = root.querySelector("[data-cgp-free]");
     if (!wrap || !groups.length) return;
-    wrap.hidden = false;
     groups.forEach(function (group) {
-      var section = el("div", "cgp-free");
-      section.appendChild(
-        el("h2", "cgp-free__heading", group.title || "🎁 Free gift"),
-      );
-      var list = el("div", "cgp-free__list");
-      section.appendChild(list);
-      wrap.appendChild(section);
-      (group.accessories || []).forEach(function (accessory) {
-        var row = el("div", "cgp-free__row");
-        row.appendChild(el("div", "cgp-free__skeleton"));
-        list.appendChild(row);
-        fetchProduct(accessory.handle).then(function (data) {
-          if (!data) return row.remove();
+      Promise.all(
+        (group.accessories || []).map(function (a) {
+          return fetchProduct(a.handle);
+        }),
+      ).then(function (datas) {
+        var items = datas.filter(function (d) {
+          if (!d) return false;
+          // "Hide when sold out": drop gifts with no available variant.
+          if (group.hideWhenSoldOut && !accInStock(group, d)) return false;
+          return true;
+        });
+        if (!items.length) return; // whole gift group sold out -> hide section
+        wrap.hidden = false;
+        var section = el("div", "cgp-free");
+        section.appendChild(
+          el("h2", "cgp-free__heading", group.title || "🎁 Free gift"),
+        );
+        var list = el("div", "cgp-free__list");
+        section.appendChild(list);
+        wrap.appendChild(section);
+        items.forEach(function (data) {
+          var row = el("div", "cgp-free__row");
+          list.appendChild(row);
           renderFreeItem(ctx, row, group, data);
         });
       });

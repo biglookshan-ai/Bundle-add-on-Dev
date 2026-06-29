@@ -797,6 +797,17 @@ function GroupCard({
           </Box>
         )}
 
+        {!isBundle && (
+          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+            <Checkbox
+              label="Hide items when sold out"
+              helpText="Once an item has no available stock it disappears from the storefront; when every item is sold out the whole group hides."
+              checked={!!group.hideWhenSoldOut}
+              onChange={(v) => onChange({ hideWhenSoldOut: v })}
+            />
+          </Box>
+        )}
+
         <Divider />
 
         <InlineStack align="space-between" blockAlign="center">
