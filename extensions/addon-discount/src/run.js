@@ -168,6 +168,68 @@ export function run(input) {
     }
   }
 
+  // ---- GIFT-CAMPAIGN node: a gift, time-gated by the node, given when one of
+  // the campaign's trigger products is in the cart. Allowance scales with the
+  // qualifying quantity (buy 2 -> 2 free). ----
+  const giftRaw = /** @type {any} */ (input)?.discountNode?.giftMeta?.value;
+  if (giftRaw) {
+    let camp;
+    try {
+      camp = JSON.parse(giftRaw);
+    } catch {
+      return EMPTY;
+    }
+    const campId = camp && camp.id;
+    const giftIds = Array.isArray(camp && camp.giftProducts)
+      ? camp.giftProducts
+      : [];
+    const perQ = Number(camp && camp.perQualifying) || 1;
+    if (!campId || !giftIds.length) return EMPTY;
+
+    // Qualifying quantity: non-gift lines whose product triggers this campaign.
+    let qualifyingQty = 0;
+    for (const line of lines) {
+      if (/** @type {any} */ (line)?.cgpGift?.value) continue; // skip gift lines
+      const trig = /** @type {any} */ (line?.merchandise)?.product?.giftTrigger
+        ?.value;
+      if (!trig) continue;
+      let ids;
+      try {
+        ids = JSON.parse(trig);
+      } catch {
+        continue;
+      }
+      if (Array.isArray(ids) && ids.indexOf(campId) >= 0) {
+        qualifyingQty += Number(line?.quantity) || 0;
+      }
+    }
+    let allowance = qualifyingQty * perQ;
+    if (allowance <= 0) return EMPTY;
+
+    const giftSet = new Set(giftIds.map(gidTail));
+    /** @type {FunctionRunResult["discounts"]} */
+    const giftDiscounts = [];
+    for (const line of lines) {
+      if (/** @type {any} */ (line)?.cgpGift?.value !== campId) continue;
+      const pid = /** @type {any} */ (line?.merchandise)?.product?.id;
+      if (typeof pid !== "string" || !giftSet.has(gidTail(pid))) continue;
+      const q = Math.min(Number(line?.quantity) || 0, allowance);
+      if (q <= 0) continue;
+      allowance -= q;
+      giftDiscounts.push({
+        message: "🎁 Free gift",
+        targets: [{ cartLine: { id: line.id, quantity: q } }],
+        value: { percentage: { value: "100.0" } },
+      });
+    }
+    return giftDiscounts.length === 0
+      ? EMPTY
+      : {
+          discountApplicationStrategy: /** @type {any} */ ("ALL"),
+          discounts: giftDiscounts,
+        };
+  }
+
   // Is this a LIMITED node? Its metafield names the offer it runs for.
   let limitedOfferId = null;
   const offerRaw = /** @type {any} */ (input)?.discountNode?.metafield?.value;

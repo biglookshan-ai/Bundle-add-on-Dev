@@ -13,6 +13,11 @@ query RunInput {
     metafield(namespace: "$app:limited", key: "offer") {
       value
     }
+    # A GIFT-CAMPAIGN node carries its campaign rules (id, gift product ids,
+    # per-qualifying count) here. Present only on gift nodes.
+    giftMeta: metafield(namespace: "$app:gift", key: "campaign") {
+      value
+    }
   }
   cart {
     lines {
@@ -45,6 +50,11 @@ query RunInput {
       cgpBid: attribute(key: "_cgp_bid") {
         value
       }
+      # `_cgp_gift` marks a gift line and names the campaign it belongs to. The
+      # gift node gives it 100% off, capped to the unlocked allowance.
+      cgpGift: attribute(key: "_cgp_gift") {
+        value
+      }
       merchandise {
         __typename
         ... on ProductVariant {
@@ -52,6 +62,12 @@ query RunInput {
           product {
             id
             addonConfig: metafield(namespace: "custom", key: "addon_config") {
+              value
+            }
+            # Campaign ids this product TRIGGERS (a gift campaign gives a gift
+            # when one of its trigger products is in the cart). Stamped by the
+            # admin (collections are expanded to their products at save time).
+            giftTrigger: metafield(namespace: "custom", key: "gift_trigger") {
               value
             }
           }
