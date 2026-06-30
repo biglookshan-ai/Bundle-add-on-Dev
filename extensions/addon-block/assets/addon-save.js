@@ -175,6 +175,10 @@
     if (root.__cgpInit) return;
     root.__cgpInit = true;
 
+    // Gift campaigns run independently of the per-product add-on config — a pure
+    // trigger product has gifts but no addon_config.
+    bootGifts(root);
+
     var node = root.querySelector("[data-cgp-config]");
     if (!node) return;
     var config;
@@ -1956,7 +1960,116 @@
     }
   }
 
-  // Run reconcileBundles() after any cart mutation (delete main, change qty, …).
+  // ---- Gift campaigns (cross-product "gift with purchase") ----
+  // Theme-readable snapshot of active campaigns (set by bootGifts).
+  var giftCampaigns = null;
+  var giftReconciling = false;
+
+  function giftActive(c) {
+    var now = Date.now();
+    var s = c.startsAt ? Date.parse(c.startsAt) : NaN;
+    var e = c.endsAt ? Date.parse(c.endsAt) : NaN;
+    if (!isNaN(e) && now >= e) return false;
+    if (!isNaN(s) && now < s) return false;
+    return true;
+  }
+
+  // Keep each fixed campaign's gift line at the unlocked allowance
+  // (qualifying qty x perQualifying). The Function caps the discount server-side;
+  // this is the UX side that adds/trims the gift line.
+  function reconcileGifts() {
+    if (giftReconciling || !giftCampaigns || !giftCampaigns.length)
+      return Promise.resolve();
+    giftReconciling = true;
+    return fetch("/cart.js", { headers: { Accept: "application/json" } })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (cart) {
+        var items = cart.items || [];
+        var updates = {};
+        var adds = []; // { handle, quantity, campId }
+        giftCampaigns.forEach(function (c) {
+          if (c.rewardMode !== "fixed") return; // "choice" picker is a later phase
+          var giftHandle = (c.giftHandles || [])[0];
+          if (!giftHandle) return;
+          var trig = {};
+          (c.triggerProductIds || []).forEach(function (id) {
+            trig[String(id)] = true;
+          });
+          var qty = 0;
+          items.forEach(function (it) {
+            if (it.properties && it.properties._cgp_gift) return; // skip gifts
+            if (trig[String(it.product_id)]) qty += it.quantity || 0;
+          });
+          var allowance = giftActive(c) ? qty * (Number(c.perQualifying) || 1) : 0;
+          var giftLines = items.filter(function (it) {
+            return it.properties && String(it.properties._cgp_gift) === String(c.id);
+          });
+          if (allowance <= 0) {
+            giftLines.forEach(function (it) {
+              updates[it.key] = 0;
+            });
+          } else if (giftLines.length === 0) {
+            adds.push({ handle: giftHandle, quantity: allowance, campId: c.id });
+          } else {
+            giftLines.forEach(function (it, idx) {
+              if (idx === 0) {
+                if ((it.quantity || 0) !== allowance) updates[it.key] = allowance;
+              } else {
+                updates[it.key] = 0; // collapse duplicates into one line
+              }
+            });
+          }
+        });
+        var chain = Promise.resolve();
+        if (Object.keys(updates).length) {
+          chain = chain.then(function () {
+            return cartPost("/cart/update.js", { updates: updates });
+          });
+        }
+        adds.forEach(function (a) {
+          chain = chain.then(function () {
+            return fetchProduct(a.handle).then(function (data) {
+              if (!data) return;
+              var v = firstAvailable(data);
+              if (!v) return;
+              return cartPost("/cart/add.js", {
+                items: [
+                  {
+                    id: v.id,
+                    quantity: a.quantity,
+                    properties: { _cgp_gift: a.campId },
+                  },
+                ],
+              });
+            });
+          });
+        });
+        return chain;
+      })
+      .catch(function () {})
+      .then(function () {
+        giftReconciling = false;
+      });
+  }
+
+  function bootGifts(root) {
+    if (window.__cgpGiftsBooted) return;
+    var node = root.querySelector("[data-cgp-gifts]");
+    if (!node) return;
+    try {
+      giftCampaigns = JSON.parse(node.textContent);
+    } catch (e) {
+      giftCampaigns = null;
+    }
+    if (!giftCampaigns || !giftCampaigns.length) return;
+    window.__cgpGiftsBooted = true;
+    installCartWatcher();
+    reconcileGifts();
+  }
+
+  // Run reconcile after any cart mutation (delete main, change qty, …).
   function installCartWatcher() {
     if (window.__cgpWatch) return;
     window.__cgpWatch = true;
@@ -1966,11 +2079,19 @@
       var res = orig.apply(this, arguments);
       try {
         var u = typeof input === "string" ? input : (input && input.url) || "";
-        if (!reconciling && /\/cart\/(change|update|add|clear)/.test(u)) {
+        if (
+          !reconciling &&
+          !giftReconciling &&
+          /\/cart\/(change|update|add|clear)/.test(u)
+        ) {
           res
             .then(function () {
               clearTimeout(window.__cgpRecTimer);
-              window.__cgpRecTimer = setTimeout(reconcileBundles, 50);
+              window.__cgpRecTimer = setTimeout(function () {
+                var p = reconcileBundles();
+                if (p && p.then) p.then(reconcileGifts);
+                else reconcileGifts();
+              }, 50);
             })
             .catch(function () {});
         }

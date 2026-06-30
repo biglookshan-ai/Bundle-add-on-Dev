@@ -1,6 +1,15 @@
 {%- assign addon_config = product.metafields.custom.addon_config -%}
-
+{%- assign gift_campaigns = shop.metafields.custom.gift_campaigns -%}
+{%- assign has_addon = false -%}
 {%- if addon_config != blank and addon_config.value.groups.size > 0 -%}
+  {%- assign has_addon = true -%}
+{%- endif -%}
+{%- assign has_gifts = false -%}
+{%- if gift_campaigns != blank and gift_campaigns.value.size > 0 -%}
+  {%- assign has_gifts = true -%}
+{%- endif -%}
+
+{%- if has_addon or has_gifts -%}
   <div
     class="cgp-addon"
     data-cgp-addon
@@ -9,53 +18,53 @@
     data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
     data-show-strikethrough="{{ block.settings.show_strikethrough }}"
   >
-    {%- comment -%} Config is handed to JS as JSON; JS fetches each product's live price/variants. {%- endcomment -%}
-    <script type="application/json" data-cgp-config>
-      {{ addon_config.value | json }}
-    </script>
+    {%- comment -%} Active gift campaigns (theme-readable snapshot) for auto-add. {%- endcomment -%}
+    {%- if has_gifts -%}
+      <script type="application/json" data-cgp-gifts>
+        {{ gift_campaigns.value | json }}
+      </script>
+    {%- endif -%}
 
-    {%- comment -%} "Free gift" — shown FIRST (most attractive promo), auto-added,
-       locked, 100% off; one section per group. {%- endcomment -%}
-    <div class="cgp-addon__free" data-cgp-free hidden></div>
+    {%- if has_addon -%}
+      {%- comment -%} Config is handed to JS as JSON; JS fetches each product's live price/variants. {%- endcomment -%}
+      <script type="application/json" data-cgp-config>
+        {{ addon_config.value | json }}
+      </script>
 
-    {%- comment -%} "Bundle & Save" — each bundle group is ONE named, expandable card.
-       A bundle with a live limited-time offer shows a countdown inside its card. {%- endcomment -%}
-    <div class="cgp-addon__bundles" data-cgp-bundles hidden>
-      <div class="cgp-addon__sec-head">
-        <h2 class="cgp-addon__heading">{{ block.settings.bundle_heading | escape }}</h2>
-        <div class="cgp-addon__counter" data-cgp-bundle-counter></div>
+      <div class="cgp-addon__free" data-cgp-free hidden></div>
+
+      <div class="cgp-addon__bundles" data-cgp-bundles hidden>
+        <div class="cgp-addon__sec-head">
+          <h2 class="cgp-addon__heading">{{ block.settings.bundle_heading | escape }}</h2>
+          <div class="cgp-addon__counter" data-cgp-bundle-counter></div>
+        </div>
+        <div class="cgp-addon__bundle-list" data-cgp-bundle-list></div>
       </div>
-      <div class="cgp-addon__bundle-list" data-cgp-bundle-list></div>
-    </div>
 
-    {%- comment -%} "Add On & Save" — one card per accessory, tabbed by group. {%- endcomment -%}
-    <div class="cgp-addon__addons" data-cgp-addons hidden>
-      <div class="cgp-addon__sec-head">
-        <h2 class="cgp-addon__heading">{{ block.settings.heading | escape }}</h2>
-        <div class="cgp-addon__counter" data-cgp-counter></div>
+      <div class="cgp-addon__addons" data-cgp-addons hidden>
+        <div class="cgp-addon__sec-head">
+          <h2 class="cgp-addon__heading">{{ block.settings.heading | escape }}</h2>
+          <div class="cgp-addon__counter" data-cgp-counter></div>
+        </div>
+        <div class="cgp-addon__tabs" data-cgp-tabs role="tablist"></div>
+        <div class="cgp-addon__grid" data-cgp-grid aria-live="polite"></div>
       </div>
-      <div class="cgp-addon__tabs" data-cgp-tabs role="tablist"></div>
-      <div class="cgp-addon__grid" data-cgp-grid aria-live="polite"></div>
-    </div>
 
-    {%- comment -%} Order total summary (count + price) sits ABOVE the button so
-       the button label can stay a plain "Add to cart" (Pre-Order / Sold out etc). {%- endcomment -%}
-    <div class="cgp-total" data-cgp-summary hidden></div>
-
-    {%- comment -%} Single aggregate CTA: adds the main product + all selected extras. {%- endcomment -%}
-    <button class="cgp-cta" type="button" data-cgp-cta hidden></button>
-
-    <div class="cgp-addon__loading" data-cgp-loading>{{ 'Loading…' }}</div>
+      <div class="cgp-total" data-cgp-summary hidden></div>
+      <button class="cgp-cta" type="button" data-cgp-cta hidden></button>
+      <div class="cgp-addon__loading" data-cgp-loading>{{ 'Loading…' }}</div>
+    {%- endif -%}
   </div>
 
-  {%- comment -%} Variant-picker modal, rendered once per block. {%- endcomment -%}
-  <div class="cgp-modal" data-cgp-modal hidden>
-    <div class="cgp-modal__backdrop" data-cgp-modal-close></div>
-    <div class="cgp-modal__dialog" role="dialog" aria-modal="true">
-      <button class="cgp-modal__x" data-cgp-modal-close aria-label="Close">&times;</button>
-      <div class="cgp-modal__body" data-cgp-modal-body></div>
+  {%- if has_addon -%}
+    <div class="cgp-modal" data-cgp-modal hidden>
+      <div class="cgp-modal__backdrop" data-cgp-modal-close></div>
+      <div class="cgp-modal__dialog" role="dialog" aria-modal="true">
+        <button class="cgp-modal__x" data-cgp-modal-close aria-label="Close">&times;</button>
+        <div class="cgp-modal__body" data-cgp-modal-body></div>
+      </div>
     </div>
-  </div>
+  {%- endif -%}
 
   <script src="{{ 'addon-save.js' | asset_url }}" defer></script>
 {%- endif -%}

@@ -238,6 +238,72 @@ async function writeNodeRules(
   return (json?.data?.metafieldsSet?.userErrors ?? []).map((e: any) => e.message);
 }
 
+function gidTail(id: string) {
+  return String(id).split("/").pop() || "";
+}
+
+async function shopGid(admin: AdminGraphql): Promise<string | null> {
+  const resp = await admin.graphql(`#graphql
+    query { shop { id } }`);
+  const json = await resp.json();
+  return json?.data?.shop?.id ?? null;
+}
+
+/**
+ * Publish a compact, theme-readable snapshot of all enabled campaigns to a SHOP
+ * metafield (custom.gift_campaigns) so the storefront can auto-add gifts and show
+ * badges. Trigger ids are numeric + collection-expanded so the theme can match
+ * cart line product_ids without reading per-line metafields.
+ */
+export async function writeShopCampaigns(
+  admin: AdminGraphql,
+  shop: string,
+): Promise<string[]> {
+  const rows = await prisma.giftCampaign.findMany({
+    where: { shop, enabled: true },
+  });
+  const list = [];
+  for (const row of rows) {
+    const c = rowToCampaign(row);
+    const triggerIds = (await expandTriggerProducts(admin, c)).map(gidTail);
+    list.push({
+      id: c.id,
+      perQualifying: Math.max(1, c.perQualifying || 1),
+      rewardMode: c.rewardMode,
+      badge: c.badgeText || "",
+      startsAt: c.startsAt || "",
+      endsAt: c.endsAt || "",
+      triggerProductIds: triggerIds,
+      giftHandles: c.giftProducts.map((g) => g.handle).filter(Boolean),
+    });
+  }
+  const owner = await shopGid(admin);
+  if (!owner) return ["Could not resolve shop id."];
+  const resp = await admin.graphql(
+    `#graphql
+      mutation ShopCampaigns($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) { userErrors { message } }
+      }`,
+    {
+      variables: {
+        metafields: [
+          {
+            ownerId: owner,
+            namespace: "custom",
+            key: "gift_campaigns",
+            type: "json",
+            value: JSON.stringify(list),
+          },
+        ],
+      },
+    },
+  );
+  const json = await resp.json();
+  return (json?.data?.metafieldsSet?.userErrors ?? []).map(
+    (e: any) => e.message,
+  );
+}
+
 // ---- public API ----
 
 export async function listCampaigns(shop: string): Promise<GiftCampaign[]> {
@@ -300,6 +366,7 @@ export async function saveCampaign(
       affected.add(pid);
   }
   errors.push(...(await restampProducts(admin, shop, affected)));
+  errors.push(...(await writeShopCampaigns(admin, shop)));
 
   return { ok: errors.length === 0, errors };
 }
@@ -331,6 +398,7 @@ export async function deleteCampaign(
   const affected = new Set<string>(await expandTriggerProducts(admin, c));
   await prisma.giftCampaign.delete({ where: { id } });
   errors.push(...(await restampProducts(admin, shop, affected)));
+  errors.push(...(await writeShopCampaigns(admin, shop)));
 
   return { ok: errors.length === 0, errors };
 }
@@ -347,5 +415,6 @@ export async function resyncAll(
       affected.add(pid);
   }
   const errors = await restampProducts(admin, shop, affected);
+  errors.push(...(await writeShopCampaigns(admin, shop)));
   return { ok: errors.length === 0, errors };
 }
