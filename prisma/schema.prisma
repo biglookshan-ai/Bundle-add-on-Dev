@@ -54,3 +54,28 @@ model BundleConfig {
   @@unique([shop, productId])
   @@index([shop])
 }
+
+// A cross-product "gift with purchase" campaign. Source of truth for the admin;
+// each campaign also writes its own automatic discount node (time-gated by
+// Shopify) whose `$app:gift` metafield carries the rules the Function reads, and
+// stamps `custom.gift_trigger` on its trigger products.
+model GiftCampaign {
+  id            String    @id // camp_xxxx — also the node metafield id + line tag
+  shop          String
+  title         String    @default("")
+  enabled       Boolean   @default(true)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  perQualifying Int       @default(1) // free gifts per qualifying unit (buy 2 -> 2)
+  rewardMode    String    @default("fixed") // "fixed" (auto-add) | "choice" (picker)
+  badgeText     String    @default("")
+  // JSON arrays of refs { id, title, handle, image }.
+  triggerProductsJson    String @default("[]")
+  triggerCollectionsJson String @default("[]")
+  giftProductsJson       String @default("[]")
+  nodeId        String? // gid://shopify/DiscountAutomaticNode/<n>
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([shop])
+}
