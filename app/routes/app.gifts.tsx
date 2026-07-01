@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { Link, useFetcher, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -58,6 +58,7 @@ const STATE_TONE: Record<string, "success" | "info" | "attention" | undefined> =
 export default function GiftCampaigns() {
   const { campaigns } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
   const busy = fetcher.state !== "idle";
 
   return (
@@ -84,9 +85,12 @@ export default function GiftCampaigns() {
             >
               Re-sync collections
             </Button>
-            <Link to="/app/gifts/new">
-              <Button variant="primary">New campaign</Button>
-            </Link>
+            <Button
+              variant="primary"
+              onClick={() => navigate("/app/gifts/new")}
+            >
+              New campaign
+            </Button>
           </InlineStack>
         </InlineStack>
 
@@ -94,7 +98,10 @@ export default function GiftCampaigns() {
           <Card>
             <EmptyState
               heading="No gift campaigns yet"
-              action={{ content: "New campaign", url: "/app/gifts/new" }}
+              action={{
+                content: "New campaign",
+                onAction: () => navigate("/app/gifts/new"),
+              }}
               image=""
             >
               <p>
@@ -135,9 +142,9 @@ export default function GiftCampaigns() {
                         </Text>
                       </BlockStack>
                       <InlineStack gap="200">
-                        <Link to={`/app/gifts/${c.id}`}>
-                          <Button>Edit</Button>
-                        </Link>
+                        <Button onClick={() => navigate(`/app/gifts/${c.id}`)}>
+                          Edit
+                        </Button>
                         <Button
                           tone="critical"
                           variant="tertiary"
