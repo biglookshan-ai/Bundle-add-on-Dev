@@ -1,0 +1,15 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "watchPatterns": [
+      "app/**",
+      "prisma/**",
+      "package.json",
+      "package-lock.json",
+      "Dockerfile",
+      "vite.config.ts",
+      "tsconfig.json",
+      "railway.json"
+    ]
+  }
+}
