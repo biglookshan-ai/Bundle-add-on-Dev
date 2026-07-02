@@ -61,10 +61,10 @@ async function expandTriggerProducts(
   return [...ids];
 }
 
-/** Set `custom.gift_trigger` on each product to the given campaign-id list. */
+/** Set `custom.gift_trigger` on each product to the given campaign entries. */
 async function writeTriggerStamps(
   admin: AdminGraphql,
-  map: Map<string, string[]>,
+  map: Map<string, any[]>,
 ): Promise<string[]> {
   const errors: string[] = [];
   const entries = [...map.entries()];
@@ -95,8 +95,11 @@ async function writeTriggerStamps(
 
 /**
  * Recompute `custom.gift_trigger` for the given products from ALL enabled
- * campaigns (so adding/removing one campaign keeps every product's stamp
- * correct). Products no longer triggered by anything are set to [].
+ * campaigns. The stamp is SELF-CONTAINED per product — the theme reads only the
+ * product's own metafield (guaranteed readable in Liquid via write_products) to
+ * auto-add gifts, no shop-level metafield needed. Each entry:
+ *   { id, triggers:[numericIds], gifts:[handles], perQualifying, badge }
+ * Products no longer triggered by anything are set to [].
  */
 async function restampProducts(
   admin: AdminGraphql,
@@ -107,16 +110,24 @@ async function restampProducts(
   const rows = await prisma.giftCampaign.findMany({
     where: { shop, enabled: true },
   });
-  // productId -> [campaignId]
-  const map = new Map<string, string[]>();
+  const map = new Map<string, any[]>();
   for (const pid of affected) map.set(pid, []);
   for (const row of rows) {
     const c = rowToCampaign(row);
-    const triggers = await expandTriggerProducts(admin, c);
-    for (const pid of triggers) {
+    const triggerGids = await expandTriggerProducts(admin, c);
+    const entry = {
+      id: c.id,
+      triggers: triggerGids.map(gidTail),
+      gifts: c.giftProducts.map((g) => g.handle).filter(Boolean),
+      perQualifying: Math.max(1, c.perQualifying || 1),
+      badge: c.badgeText || "",
+      rewardMode: c.rewardMode,
+      startsAt: c.startsAt || "",
+      endsAt: c.endsAt || "",
+    };
+    for (const pid of triggerGids) {
       if (!affected.has(pid)) continue; // only rewrite the affected set
-      const list = map.get(pid)!;
-      if (list.indexOf(c.id) < 0) list.push(c.id);
+      map.get(pid)!.push(entry);
     }
   }
   return writeTriggerStamps(admin, map);
@@ -366,7 +377,6 @@ export async function saveCampaign(
       affected.add(pid);
   }
   errors.push(...(await restampProducts(admin, shop, affected)));
-  errors.push(...(await writeShopCampaigns(admin, shop)));
 
   return { ok: errors.length === 0, errors };
 }
@@ -398,7 +408,6 @@ export async function deleteCampaign(
   const affected = new Set<string>(await expandTriggerProducts(admin, c));
   await prisma.giftCampaign.delete({ where: { id } });
   errors.push(...(await restampProducts(admin, shop, affected)));
-  errors.push(...(await writeShopCampaigns(admin, shop)));
 
   return { ok: errors.length === 0, errors };
 }
@@ -415,6 +424,5 @@ export async function resyncAll(
       affected.add(pid);
   }
   const errors = await restampProducts(admin, shop, affected);
-  errors.push(...(await writeShopCampaigns(admin, shop)));
   return { ok: errors.length === 0, errors };
 }

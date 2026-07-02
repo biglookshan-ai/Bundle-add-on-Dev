@@ -1,11 +1,12 @@
 {%- assign addon_config = product.metafields.custom.addon_config -%}
-{%- assign gift_campaigns = shop.metafields.custom.gift_campaigns -%}
+{%- assign gift_trigger = product.metafields.custom.gift_trigger -%}
 {%- assign has_addon = false -%}
 {%- if addon_config != blank and addon_config.value.groups.size > 0 -%}
   {%- assign has_addon = true -%}
 {%- endif -%}
+{%- comment -%} This product triggers a gift campaign (self-contained stamp). {%- endcomment -%}
 {%- assign has_gifts = false -%}
-{%- if gift_campaigns != blank and gift_campaigns.value.size > 0 -%}
+{%- if gift_trigger != blank and gift_trigger.value.size > 0 -%}
   {%- assign has_gifts = true -%}
 {%- endif -%}
 
@@ -18,10 +19,10 @@
     data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
     data-show-strikethrough="{{ block.settings.show_strikethrough }}"
   >
-    {%- comment -%} Active gift campaigns (theme-readable snapshot) for auto-add. {%- endcomment -%}
+    {%- comment -%} Gift campaigns this product triggers (self-contained). {%- endcomment -%}
     {%- if has_gifts -%}
       <script type="application/json" data-cgp-gifts>
-        {{ gift_campaigns.value | json }}
+        {{ gift_trigger.value | json }}
       </script>
     {%- endif -%}
 

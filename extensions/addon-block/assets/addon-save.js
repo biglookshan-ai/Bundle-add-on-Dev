@@ -2058,12 +2058,28 @@
     if (window.__cgpGiftsBooted) return;
     var node = root.querySelector("[data-cgp-gifts]");
     if (!node) return;
+    var raw;
     try {
-      giftCampaigns = JSON.parse(node.textContent);
+      raw = JSON.parse(node.textContent);
     } catch (e) {
-      giftCampaigns = null;
+      raw = null;
     }
-    if (!giftCampaigns || !giftCampaigns.length) return;
+    if (!raw || !raw.length) return;
+    // Normalise the product's gift_trigger entries into the campaign shape
+    // reconcileGifts expects (accepts both `triggers`/`gifts` and the older
+    // `triggerProductIds`/`giftHandles`).
+    giftCampaigns = raw.map(function (e) {
+      return {
+        id: e.id,
+        rewardMode: e.rewardMode || "fixed",
+        perQualifying: Number(e.perQualifying) || 1,
+        startsAt: e.startsAt || "",
+        endsAt: e.endsAt || "",
+        triggerProductIds: e.triggers || e.triggerProductIds || [],
+        giftHandles: e.gifts || e.giftHandles || [],
+      };
+    });
+    if (!giftCampaigns.length) return;
     window.__cgpGiftsBooted = true;
     installCartWatcher();
     reconcileGifts();

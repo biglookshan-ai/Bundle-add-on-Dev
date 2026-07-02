@@ -193,13 +193,19 @@ export function run(input) {
       const trig = /** @type {any} */ (line?.merchandise)?.product?.giftTrigger
         ?.value;
       if (!trig) continue;
-      let ids;
+      let entries;
       try {
-        ids = JSON.parse(trig);
+        entries = JSON.parse(trig);
       } catch {
         continue;
       }
-      if (Array.isArray(ids) && ids.indexOf(campId) >= 0) {
+      // Each entry is a campaign id string (legacy) or { id, ... } (current).
+      const triggersCamp =
+        Array.isArray(entries) &&
+        entries.some(function (e) {
+          return (e && typeof e === "object" ? e.id : e) === campId;
+        });
+      if (triggersCamp) {
         qualifyingQty += Number(line?.quantity) || 0;
       }
     }
