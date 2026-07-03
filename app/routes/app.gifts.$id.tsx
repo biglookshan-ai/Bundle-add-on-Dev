@@ -307,7 +307,10 @@ export default function GiftCampaignEditor() {
                   label="Reward mode"
                   options={[
                     { label: "Fixed — auto-add the gift", value: "fixed" },
-                    { label: "Choice — customer picks (coming soon)", value: "choice" },
+                    {
+                      label: "Choice — customer picks on the product page",
+                      value: "choice",
+                    },
                   ]}
                   value={c.rewardMode}
                   onChange={(v) => patch({ rewardMode: v as "fixed" | "choice" })}
