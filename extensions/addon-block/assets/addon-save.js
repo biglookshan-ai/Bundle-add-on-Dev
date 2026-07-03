@@ -1974,7 +1974,78 @@
     return true;
   }
 
-  // Keep each fixed campaign's gift line at the unlocked allowance
+  // Which gift the customer chose per campaign (choice mode). Default = first.
+  var giftChoice = {};
+  function chosenGift(c) {
+    var handles = c.giftHandles || [];
+    if (c.rewardMode === "choice" && giftChoice[c.id] &&
+        handles.indexOf(giftChoice[c.id]) >= 0) {
+      return giftChoice[c.id];
+    }
+    return handles[0];
+  }
+
+  // On a trigger product page: show the "free gift" badge, and for choice mode a
+  // picker so the customer selects which gift they'll get.
+  function renderGiftPromo(root) {
+    var host = root.querySelector("[data-cgp-giftpromo]");
+    if (!host || !giftCampaigns || !giftCampaigns.length) return;
+    host.innerHTML = "";
+    var any = false;
+    giftCampaigns.forEach(function (c) {
+      if (!giftActive(c)) return;
+      var handles = c.giftHandles || [];
+      if (!handles.length) return;
+      any = true;
+      var box = el("div", "cgp-giftp");
+      box.style.cssText =
+        "border:1px solid #e0435c;border-radius:8px;padding:12px 14px;margin:12px 0;";
+      var badge = el("div", "cgp-giftp__badge", c.badge || "🎁 Free gift");
+      badge.style.cssText = "font-weight:600;color:#e0435c;margin-bottom:6px;";
+      box.appendChild(badge);
+
+      if (c.rewardMode === "choice" && handles.length > 1) {
+        if (!giftChoice[c.id]) giftChoice[c.id] = handles[0];
+        var lbl = el("div", null, "Choose your free gift:");
+        lbl.style.cssText = "font-size:13px;opacity:.75;margin-bottom:6px;";
+        box.appendChild(lbl);
+        handles.forEach(function (h) {
+          var row = el("label", "cgp-giftp__opt");
+          row.style.cssText =
+            "display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;";
+          var input = el("input");
+          input.type = "radio";
+          input.name = "cgp-gift-" + c.id;
+          input.value = h;
+          if (giftChoice[c.id] === h) input.checked = true;
+          input.addEventListener("change", function () {
+            giftChoice[c.id] = h;
+            reconcileGifts();
+            renderGiftPromo(root);
+          });
+          var name = el("span", null, h);
+          row.appendChild(input);
+          row.appendChild(name);
+          box.appendChild(row);
+          fetchProduct(h).then(function (data) {
+            if (data) name.textContent = (data.title || h) + " — FREE";
+          });
+        });
+      } else {
+        var line = el("div", null, "Free with purchase");
+        line.style.cssText = "font-size:13px;";
+        box.appendChild(line);
+        fetchProduct(handles[0]).then(function (data) {
+          line.textContent =
+            "Free with purchase: " + (data && data.title ? data.title : handles[0]);
+        });
+      }
+      host.appendChild(box);
+    });
+    host.hidden = !any;
+  }
+
+  // Keep each campaign's gift line at the unlocked allowance
   // (qualifying qty x perQualifying). The Function caps the discount server-side;
   // this is the UX side that adds/trims the gift line.
   function reconcileGifts() {
@@ -1990,9 +2061,8 @@
         var updates = {};
         var adds = []; // { handle, quantity, campId }
         giftCampaigns.forEach(function (c) {
-          if (c.rewardMode !== "fixed") return; // "choice" picker is a later phase
-          var giftHandle = (c.giftHandles || [])[0];
-          if (!giftHandle) return;
+          var desired = chosenGift(c); // fixed = first; choice = customer's pick
+          if (!desired) return;
           var trig = {};
           (c.triggerProductIds || []).forEach(function (id) {
             trig[String(id)] = true;
@@ -2006,14 +2076,18 @@
           var giftLines = items.filter(function (it) {
             return it.properties && String(it.properties._cgp_gift) === String(c.id);
           });
-          if (allowance <= 0) {
-            giftLines.forEach(function (it) {
-              updates[it.key] = 0;
-            });
-          } else if (giftLines.length === 0) {
-            adds.push({ handle: giftHandle, quantity: allowance, campId: c.id });
+          // Keep only gift lines that match the desired gift; drop the rest
+          // (allowance gone, or the customer switched to a different gift).
+          var kept = [];
+          giftLines.forEach(function (it) {
+            if (allowance > 0 && it.handle === desired) kept.push(it);
+            else updates[it.key] = 0;
+          });
+          if (allowance <= 0) return;
+          if (kept.length === 0) {
+            adds.push({ handle: desired, quantity: allowance, campId: c.id });
           } else {
-            giftLines.forEach(function (it, idx) {
+            kept.forEach(function (it, idx) {
               if (idx === 0) {
                 if ((it.quantity || 0) !== allowance) updates[it.key] = allowance;
               } else {
@@ -2075,6 +2149,7 @@
         perQualifying: Number(e.perQualifying) || 1,
         startsAt: e.startsAt || "",
         endsAt: e.endsAt || "",
+        badge: e.badge || "🎁 Free gift",
         triggerProductIds: e.triggers || e.triggerProductIds || [],
         giftHandles: e.gifts || e.giftHandles || [],
       };
@@ -2082,6 +2157,7 @@
     if (!giftCampaigns.length) return;
     window.__cgpGiftsBooted = true;
     installCartWatcher();
+    renderGiftPromo(root);
     reconcileGifts();
   }
 
