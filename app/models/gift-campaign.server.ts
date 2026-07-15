@@ -7,6 +7,7 @@ import {
   rowToCampaign,
   type GiftCampaign,
 } from "./gift-campaign";
+import { syncPromoTags, PROMO_TAG_GIFT } from "./promo-tags.server";
 
 type AdminGraphql = {
   graphql: (query: string, options?: { variables?: any }) => Promise<Response>;
@@ -130,7 +131,17 @@ async function restampProducts(
       map.get(pid)!.push(entry);
     }
   }
-  return writeTriggerStamps(admin, map);
+  const errors = await writeTriggerStamps(admin, map);
+  // Promo tag: a product that triggers ≥1 enabled campaign gets `promo:gift`.
+  for (const [pid, entries] of map) {
+    await syncPromoTags(
+      admin,
+      pid,
+      entries.length ? [PROMO_TAG_GIFT] : [],
+      [PROMO_TAG_GIFT],
+    );
+  }
+  return errors;
 }
 
 /** Create or update the campaign's automatic discount node + its rules metafield. */

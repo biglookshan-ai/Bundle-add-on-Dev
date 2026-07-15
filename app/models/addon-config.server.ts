@@ -9,6 +9,24 @@ import {
   type AddonConfig,
   type ProductSummary,
 } from "./addon-config";
+import {
+  syncPromoTags,
+  PROMO_TAG_BUNDLE,
+  PROMO_TAG_ADDON,
+  PROMO_TAG_FREE,
+} from "./promo-tags.server";
+
+const ADDON_PROMO_TAGS = [PROMO_TAG_BUNDLE, PROMO_TAG_ADDON, PROMO_TAG_FREE];
+
+/** Promo tags a product's config warrants (non-archived groups only). */
+function promoTagsFor(config: AddonConfig): string[] {
+  const want: string[] = [];
+  const live = config.groups.filter((g) => !g.archived);
+  if (live.some((g) => g.type === "bundle")) want.push(PROMO_TAG_BUNDLE);
+  if (live.some((g) => g.type === "addon")) want.push(PROMO_TAG_ADDON);
+  if (live.some((g) => g.type === "free")) want.push(PROMO_TAG_FREE);
+  return want;
+}
 
 /**
  * Server-only operations for add-on config. Config lives in two places kept in
@@ -82,6 +100,7 @@ export async function saveConfig(
     await prisma.bundleConfig.deleteMany({
       where: { shop, productId: product.id },
     });
+    await syncPromoTags(admin, product.id, [], ADDON_PROMO_TAGS);
     return { ok: true, userErrors: [] };
   }
 
@@ -138,6 +157,8 @@ export async function saveConfig(
       groupsJson,
     },
   });
+
+  await syncPromoTags(admin, product.id, promoTagsFor(config), ADDON_PROMO_TAGS);
 
   return { ok: true, userErrors: [] };
 }
