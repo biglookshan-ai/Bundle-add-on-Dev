@@ -77,8 +77,12 @@ function bxgyInput(mainId: string, giftId: string, pct: number) {
       productDiscounts: true, // stack with our other per-accessory nodes
       shippingDiscounts: true,
     },
+    // Minimum SPEND of the main (not a quantity) — a spend threshold is a
+    // non-consumed CONDITION, so every per-accessory node can trigger off the
+    // SAME single main in the cart. A quantity-based "buy 1" is consumed per
+    // discount, which would force one main per discounted accessory.
     customerBuys: {
-      value: { quantity: "1" },
+      value: { amount: "0.01" },
       items: { products: { productsToAdd: [mainId] } },
     },
     customerGets: {
