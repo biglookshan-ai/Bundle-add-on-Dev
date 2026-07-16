@@ -106,21 +106,32 @@ export function parseAccConfig(raw: string | null | undefined): AccessoryConfig 
 }
 
 /**
- * The distinct discount levels a product's config needs backing native BxGy
- * discounts for: a map of percent (1–100) → the gift/accessory product gids that
- * get that % off when the main is bought. Full-price items (0%) need no discount.
+ * Every accessory that needs a backing native discount, ONE ENTRY PER ACCESSORY
+ * product (deduped, keeping the highest % if the same product appears twice).
+ *
+ * Why per-accessory and not grouped by % level: Shopify's "Buy X Get Y" get-
+ * quantity is a HARD THRESHOLD — "get N at X% off" only applies when N eligible
+ * items are in the cart, and discounts exactly N. So a single node covering a
+ * whole level can't independently discount however many accessories the customer
+ * happens to pick. Instead we create one BxGy per accessory (buy main → get THIS
+ * one accessory, quantity 1, its %), set to combine, so each selected accessory
+ * is discounted on its own regardless of how many others are chosen.
  */
-export function discountLevels(config: AccessoryConfig): Map<number, string[]> {
-  const levels = new Map<number, string[]>();
+export function discountedAccessories(
+  config: AccessoryConfig,
+): { productId: string; percent: number }[] {
+  const best = new Map<string, number>();
   for (const g of config.groups) {
     if (g.archived) continue;
     for (const a of g.accessories) {
       const pct = itemPercent(g, a);
       if (pct <= 0) continue; // full price → no native discount
-      const list = levels.get(pct) ?? [];
-      if (!list.includes(a.productId)) list.push(a.productId);
-      levels.set(pct, list);
+      const prev = best.get(a.productId) ?? 0;
+      if (pct > prev) best.set(a.productId, pct);
     }
   }
-  return levels;
+  return [...best.entries()].map(([productId, percent]) => ({
+    productId,
+    percent,
+  }));
 }

@@ -3,7 +3,7 @@ import {
   ACC_METAFIELD_NAMESPACE,
   ACC_METAFIELD_KEY,
   EMPTY_ACC_CONFIG,
-  discountLevels,
+  discountedAccessories,
   parseAccConfig,
   type AccessoryConfig,
 } from "./accessory-config";
@@ -46,8 +46,14 @@ export async function readAccConfig(
 /**
  * Server-only operations for the Function-FREE accessory config. Discounts are
  * NATIVE "Buy X Get Y" automatic discounts (work on any plan). Each product gets
- * one BxGy node per distinct discount level (e.g. 10% off, 100% off), scoped by
- * a title prefix so we can create / update / delete just this product's nodes.
+ * ONE BxGy node PER DISCOUNTED ACCESSORY (buy main → get that one accessory,
+ * quantity 1, its own %), scoped by a title prefix so we can create / update /
+ * delete just this product's nodes.
+ *
+ * Per-accessory (not per-%-level) because Shopify's get-quantity is a hard
+ * threshold: a single node with "get N" only applies when N eligible items are
+ * present and discounts exactly N. Quantity-1-per-accessory + combinesWith lets
+ * every selected accessory be discounted independently, however many are chosen.
  */
 
 type AdminGraphql = {
@@ -57,18 +63,18 @@ type AdminGraphql = {
 function numericId(gid: string) {
   return gid.replace("gid://shopify/Product/", "");
 }
-/** Title encodes the product + level so we only ever touch our own nodes. */
-function nodeTitle(productNumericId: string, pct: number) {
-  return `CGP-ACC ${productNumericId}:${pct}`;
+/** Title encodes the product + accessory so we only ever touch our own nodes. */
+function nodeTitle(productNumericId: string, accNumericId: string) {
+  return `CGP-ACC ${productNumericId}:${accNumericId}`;
 }
 
-/** BxGy input: buy the MAIN product, get these accessories `pct`% off. */
-function bxgyInput(mainId: string, giftIds: string[], pct: number) {
+/** BxGy input: buy the MAIN product, get ONE accessory `pct`% off. */
+function bxgyInput(mainId: string, giftId: string, pct: number) {
   return {
     title: "", // filled by caller
     combinesWith: {
       orderDiscounts: true,
-      productDiscounts: true,
+      productDiscounts: true, // stack with our other per-accessory nodes
       shippingDiscounts: true,
     },
     customerBuys: {
@@ -78,11 +84,11 @@ function bxgyInput(mainId: string, giftIds: string[], pct: number) {
     customerGets: {
       value: {
         discountOnQuantity: {
-          quantity: String(Math.max(giftIds.length, 10)),
+          quantity: "1", // one accessory, discounted on its own
           effect: { percentage: Math.min(1, Math.max(0, pct / 100)) },
         },
       },
-      items: { products: { productsToAdd: giftIds } },
+      items: { products: { productsToAdd: [giftId] } },
     },
   };
 }
@@ -127,20 +133,19 @@ export async function reconcileAccessoryDiscounts(
 ): Promise<string[]> {
   const errors: string[] = [];
   const pid = numericId(product.id);
-  const levels = discountLevels(config); // pct -> [accessory gids]
+  const accessories = discountedAccessories(config); // one entry per accessory
   const existing = await existingNodes(admin, pid);
   const wanted = new Set<string>();
 
-  for (const [pct, giftIds] of levels) {
-    if (!giftIds.length) continue;
-    const levelKey = String(pct);
-    wanted.add(levelKey);
+  for (const { productId: giftGid, percent: pct } of accessories) {
+    const accKey = numericId(giftGid);
+    wanted.add(accKey);
     const input = {
-      ...bxgyInput(product.id, giftIds, pct),
-      title: nodeTitle(pid, pct),
+      ...bxgyInput(product.id, giftGid, pct),
+      title: nodeTitle(pid, accKey),
       startsAt: new Date().toISOString(), // required by Shopify automatic discounts
     };
-    const nodeId = existing.get(levelKey);
+    const nodeId = existing.get(accKey);
     if (nodeId) {
       const resp = await admin.graphql(
         `#graphql
@@ -170,9 +175,9 @@ export async function reconcileAccessoryDiscounts(
     }
   }
 
-  // Delete nodes for levels this product no longer has.
-  for (const [levelKey, nodeId] of existing) {
-    if (wanted.has(levelKey)) continue;
+  // Delete nodes for accessories this product no longer discounts.
+  for (const [accKey, nodeId] of existing) {
+    if (wanted.has(accKey)) continue;
     const resp = await admin.graphql(
       `#graphql
         mutation AccDelete($id: ID!) {
