@@ -120,9 +120,7 @@
     }
   }
 
-  var bundleGroupSeq = 0;
-
-  // Bundle mode: each group is a standalone, radio-selectable bundle. Only the
+  // Bundle mode: each group is a standalone, single-select bundle. Only the
   // chosen bundle's components are added to the cart, so only its native BxGy
   // fires. Shows a per-bundle total (main + components) with the saving.
   function setupBundle(root, config, host, cta, ctaLabel, currency, defaultPct) {
@@ -131,7 +129,6 @@
     });
     if (!groups.length) return;
     var mainHandle = root.getAttribute("data-product-handle");
-    var radioName = "cgp-bundle-" + bundleGroupSeq++;
 
     cta.textContent = "";
     var ctaMain = el("span", "cgp-acc__cta-main", ctaLabel || "Add to cart");
@@ -147,9 +144,7 @@
     function selectBundle(idx) {
       selectedIdx = idx;
       bundles.forEach(function (b, i) {
-        b.radio.checked = i === idx;
         b.tile.classList.toggle("is-selected", i === idx);
-        b.body.hidden = i !== idx;
       });
       updateCta();
     }
@@ -172,10 +167,8 @@
         Number(group.bundlePercent != null ? group.bundlePercent : defaultPct) ||
         0;
       var tile = el("div", "cgp-bundle");
-      var head = el("label", "cgp-bundle__head");
-      var radio = el("input", "cgp-bundle__radio");
-      radio.type = "radio";
-      radio.name = radioName;
+      // Header (click anywhere to select this bundle).
+      var head = el("div", "cgp-bundle__head");
       var headInfo = el("span", "cgp-bundle__headinfo");
       var nameEl = el(
         "span",
@@ -185,16 +178,35 @@
       var priceRow = el("span", "cgp-bundle__pricerow");
       headInfo.appendChild(nameEl);
       headInfo.appendChild(priceRow);
-      head.appendChild(radio);
+      var circle = el("span", "cgp-bundle__circle");
       head.appendChild(headInfo);
+      head.appendChild(circle);
       tile.appendChild(head);
+      head.addEventListener("click", function () {
+        selectBundle(gi);
+      });
+
+      // Thumbnail strip + expand toggle (collapsed by default).
+      var strip = el("div", "cgp-bundle__strip");
+      var thumbs = el("span", "cgp-bundle__thumbs");
+      var toggle = el("button", "cgp-bundle__toggle");
+      toggle.type = "button";
+      toggle.textContent = "View more ▾";
+      strip.appendChild(thumbs);
+      strip.appendChild(toggle);
+      tile.appendChild(strip);
+
       var body = el("div", "cgp-bundle__body");
       body.hidden = true;
       tile.appendChild(body);
       host.appendChild(tile);
 
-      radio.addEventListener("change", function () {
-        if (radio.checked) selectBundle(gi);
+      toggle.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = body.hidden;
+        body.hidden = !open;
+        strip.classList.toggle("is-open", open);
+        toggle.textContent = open ? "Hide ▲" : "View more ▾";
       });
 
       var rows = [];
@@ -239,6 +251,9 @@
         row.appendChild(media);
         row.appendChild(infoCol);
         body.appendChild(row);
+        // Collapsed-view thumbnail.
+        var stripThumb = el("span", "cgp-bundle__thumb");
+        thumbs.appendChild(stripThumb);
 
         var rec = { getVariantId: null, base: 0 };
         rows.push(rec);
@@ -246,6 +261,7 @@
         fetchProduct(a.handle).then(function (data) {
           if (!data) {
             row.remove();
+            stripThumb.remove();
             return;
           }
           cname.textContent = data.title || a.title;
@@ -254,11 +270,15 @@
             var im = el("img");
             im.src = img;
             media.appendChild(im);
+            var im2 = el("img");
+            im2.src = img;
+            stripThumb.appendChild(im2);
           }
           var offered = offeredVariants(a, data);
           var v = firstAvailable(offered);
           if (!v) {
             row.remove();
+            stripThumb.remove();
             return;
           }
           rec.getVariantId = v.id;
@@ -295,7 +315,6 @@
       bundles.push({
         tile: tile,
         body: body,
-        radio: radio,
         rows: rows,
         recalc: recalc,
         currentSave: currentSave,
