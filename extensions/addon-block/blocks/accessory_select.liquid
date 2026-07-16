@@ -1,0 +1,34 @@
+{%- assign acc = product.metafields.custom.accessory_config -%}
+{%- if acc != blank and acc.value.groups.size > 0 -%}
+  <div
+    class="cgp-acc"
+    data-cgp-acc
+    data-product-id="{{ product.id }}"
+    data-product-handle="{{ product.handle }}"
+    data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+  >
+    <script type="application/json" data-cgp-acc-config>
+      {{ acc.value | json }}
+    </script>
+    <div class="cgp-acc__groups" data-cgp-acc-groups></div>
+    <button class="cgp-acc__cta" type="button" data-cgp-acc-cta hidden>
+      {{ block.settings.cta_label | default: 'Add to cart' }}
+    </button>
+  </div>
+  <script src="{{ 'accessory-select.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Accessory offers",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "cta_label",
+      "label": "Add-to-cart button label",
+      "default": "Add to cart"
+    }
+  ]
+}
+{% endschema %}

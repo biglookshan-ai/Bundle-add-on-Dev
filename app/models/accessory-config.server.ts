@@ -2,10 +2,46 @@ import prisma from "../db.server";
 import {
   ACC_METAFIELD_NAMESPACE,
   ACC_METAFIELD_KEY,
+  EMPTY_ACC_CONFIG,
   discountLevels,
+  parseAccConfig,
   type AccessoryConfig,
 } from "./accessory-config";
 import type { ProductSummary } from "./addon-config";
+
+/** Read a product's accessory config + basic info (for the editor loader). */
+export async function readAccConfig(
+  admin: AdminGraphql,
+  productId: string,
+): Promise<{ product: ProductSummary | null; config: AccessoryConfig }> {
+  const resp = await admin.graphql(
+    `#graphql
+      query AccProduct($id: ID!) {
+        product(id: $id) {
+          id
+          title
+          handle
+          featuredImage { url }
+          metafield(namespace: "${ACC_METAFIELD_NAMESPACE}", key: "${ACC_METAFIELD_KEY}") {
+            value
+          }
+        }
+      }`,
+    { variables: { id: productId } },
+  );
+  const j = await resp.json();
+  const p = j?.data?.product;
+  if (!p?.id) return { product: null, config: { ...EMPTY_ACC_CONFIG } };
+  return {
+    product: {
+      id: p.id,
+      title: p.title ?? "",
+      handle: p.handle ?? "",
+      image: p.featuredImage?.url ?? null,
+    },
+    config: parseAccConfig(p.metafield?.value),
+  };
+}
 
 /**
  * Server-only operations for the Function-FREE accessory config. Discounts are
