@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -11,10 +11,19 @@ import {
   Thumbnail,
   EmptyState,
 } from "@shopify/polaris";
-import { ImageIcon } from "@shopify/polaris-icons";
+import { ImageIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { deleteAccessoryConfig } from "../models/accessory-config.server";
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const form = await request.formData();
+  const productId = String(form.get("productId") || "");
+  if (productId) await deleteAccessoryConfig(admin, session.shop, productId);
+  return { ok: true };
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -38,6 +47,21 @@ export default function AccessoryOffers() {
   const { products } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
+  const deleteFetcher = useFetcher<typeof action>();
+  const deletingId =
+    deleteFetcher.state !== "idle"
+      ? String(deleteFetcher.formData?.get("productId") || "")
+      : "";
+
+  const remove = (productId: string, title: string) => {
+    if (
+      !window.confirm(
+        `Remove the offer for “${title}”? This deletes its discount and storefront config.`,
+      )
+    )
+      return;
+    deleteFetcher.submit({ productId }, { method: "POST" });
+  };
 
   const configure = async () => {
     const picked = await shopify.resourcePicker({
@@ -101,9 +125,21 @@ export default function AccessoryOffers() {
                         </Text>
                       </BlockStack>
                     </InlineStack>
-                    <Button onClick={() => navigate(`/app/accessories/${p.numericId}`)}>
-                      Edit
-                    </Button>
+                    <InlineStack gap="200" blockAlign="center">
+                      <Button
+                        onClick={() => navigate(`/app/accessories/${p.numericId}`)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        icon={DeleteIcon}
+                        tone="critical"
+                        variant="tertiary"
+                        accessibilityLabel="Remove"
+                        loading={deletingId === p.id}
+                        onClick={() => remove(p.id, p.title)}
+                      />
+                    </InlineStack>
                   </InlineStack>
                 </Box>
               ))}

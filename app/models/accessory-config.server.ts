@@ -264,3 +264,44 @@ export async function saveAccessoryConfig(
 
   return { ok: errors.length === 0, errors };
 }
+
+/** Remove a product's config entirely: metafield + discount nodes + index row. */
+export async function deleteAccessoryConfig(
+  admin: AdminGraphql,
+  shop: string,
+  productId: string,
+): Promise<void> {
+  const pid = numericId(productId);
+  // Delete our discount nodes (any type) for this product.
+  for (const nodeId of await existingNodeIds(admin, pid)) {
+    await admin.graphql(
+      `#graphql
+        mutation AccDelete($id: ID!) {
+          discountAutomaticDelete(id: $id) { userErrors { message } }
+        }`,
+      { variables: { id: nodeId } },
+    );
+  }
+  // Delete the storefront metafield.
+  await admin.graphql(
+    `#graphql
+      mutation AccClear($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) { userErrors { message } }
+      }`,
+    {
+      variables: {
+        metafields: [
+          {
+            ownerId: productId,
+            namespace: ACC_METAFIELD_NAMESPACE,
+            key: ACC_METAFIELD_KEY,
+          },
+        ],
+      },
+    },
+  );
+  // Delete the dashboard index row.
+  await prisma.bundleConfig
+    .delete({ where: { shop_productId: { shop, productId } } })
+    .catch(() => {});
+}
