@@ -63,10 +63,6 @@ type AdminGraphql = {
 function numericId(gid: string) {
   return gid.replace("gid://shopify/Product/", "");
 }
-/** Title prefix scopes nodes to this product so we only ever touch our own. */
-function nodeTitle(productNumericId: string) {
-  return `CGP-ACC ${productNumericId}:offer`;
-}
 
 /** BxGy input: buy the main (qty 1) → get `qty` of these accessories `pct`% off. */
 function bxgyInput(
@@ -135,17 +131,40 @@ async function existingNodeIds(
   return ids;
 }
 
-/** Make this product's discount node match its config (wipe + recreate one BxGy). */
+/** Parse the JSON list of discount node gids we track in BundleConfig.groupsJson. */
+export function parseNodeIds(groupsJson: string | null | undefined): string[] {
+  try {
+    const a = JSON.parse(groupsJson || "[]");
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Make this product's discount nodes match its config (wipe + recreate).
+ *
+ * The customer-facing discount title is the BUNDLE NAME (or "Add-on discount"),
+ * so the cart shows something meaningful. We therefore can't identify our nodes
+ * by a title prefix any more — the caller passes the node ids we created last
+ * time (tracked in the DB) and we also sweep any legacy "CGP-ACC …" titled nodes
+ * for a clean migration. Returns the ids of the nodes we (re)created.
+ */
 export async function reconcileAccessoryDiscounts(
   admin: AdminGraphql,
   product: ProductSummary,
   config: AccessoryConfig,
-): Promise<string[]> {
+  priorNodeIds: string[] = [],
+): Promise<{ errors: string[]; nodeIds: string[] }> {
   const errors: string[] = [];
   const pid = numericId(product.id);
 
-  // Wipe our existing nodes (any type) first — clean migration + no stale nodes.
-  for (const nodeId of await existingNodeIds(admin, pid)) {
+  // Delete our previous nodes (tracked ids) + any legacy prefix-titled nodes.
+  const toDelete = new Set([
+    ...priorNodeIds,
+    ...(await existingNodeIds(admin, pid)),
+  ]);
+  for (const nodeId of toDelete) {
     const resp = await admin.graphql(
       `#graphql
         mutation AccDelete($id: ID!) {
@@ -167,13 +186,15 @@ export async function reconcileAccessoryDiscounts(
     // components at that bundle's rate). Multiple nodes coexist safely because
     // the customer only ever adds one bundle's components at a time, so only that
     // node's "get" items are in the cart and only it consumes the main.
+    let n = 0;
     for (const g of config.groups) {
-      if (g.archived) continue;
+      if (g.archived || g.accessories.length === 0) continue;
+      n += 1;
       const ids = [...new Set(g.accessories.map((a) => a.productId))];
       const pct = clampPct(g.bundlePercent ?? config.offerPercent ?? 0);
       if (pct <= 0 || ids.length === 0) continue;
       nodes.push({
-        title: `CGP-ACC ${pid}:${g.id}`,
+        title: (g.title || "").trim() || `Bundle ${n}`,
         giftIds: ids,
         pct,
         qty: ids.length, // the whole bundle is required
@@ -184,13 +205,14 @@ export async function reconcileAccessoryDiscounts(
     const pct = clampPct(config.offerPercent ?? 0);
     if (pct > 0 && giftIds.length > 0)
       nodes.push({
-        title: nodeTitle(pid),
+        title: "Add-on discount",
         giftIds,
         pct,
         qty: config.offerQuantity ?? 1,
       });
   }
 
+  const nodeIds: string[] = [];
   for (const n of nodes) {
     const input = {
       ...bxgyInput(product.id, n.giftIds, n.pct, n.qty),
@@ -201,17 +223,20 @@ export async function reconcileAccessoryDiscounts(
       `#graphql
         mutation AccCreate($d: DiscountAutomaticBxgyInput!) {
           discountAutomaticBxgyCreate(automaticBxgyDiscount: $d) {
+            automaticDiscountNode { id }
             userErrors { message }
           }
         }`,
       { variables: { d: input } },
     );
     const j = await resp.json();
-    for (const e of j?.data?.discountAutomaticBxgyCreate?.userErrors ?? [])
-      errors.push(e.message);
+    const created = j?.data?.discountAutomaticBxgyCreate;
+    if (created?.automaticDiscountNode?.id)
+      nodeIds.push(created.automaticDiscountNode.id);
+    for (const e of created?.userErrors ?? []) errors.push(e.message);
   }
 
-  return errors;
+  return { errors, nodeIds };
 }
 
 /** Write the metafield (source of truth read by the storefront) + BxGy discounts. */
@@ -266,9 +291,21 @@ export async function saveAccessoryConfig(
     for (const e of j?.data?.metafieldsSet?.userErrors ?? []) errors.push(e.message);
   }
 
-  errors.push(...(await reconcileAccessoryDiscounts(admin, product, config)));
+  // Node ids we created last time (so we can delete them before recreating).
+  const existingRow = await prisma.bundleConfig.findUnique({
+    where: { shop_productId: { shop, productId: product.id } },
+  });
+  const priorNodeIds = parseNodeIds(existingRow?.groupsJson);
+  const rec = await reconcileAccessoryDiscounts(
+    admin,
+    product,
+    config,
+    priorNodeIds,
+  );
+  errors.push(...rec.errors);
+  const groupsJson = JSON.stringify(rec.nodeIds);
 
-  // Dashboard index row.
+  // Dashboard index row (groupsJson stores our discount node ids).
   await prisma.bundleConfig.upsert({
     where: { shop_productId: { shop, productId: product.id } },
     create: {
@@ -279,7 +316,7 @@ export async function saveAccessoryConfig(
       productImage: product.image ?? null,
       groupCount: live.length,
       accessoryCount: live.reduce((s, g) => s + g.accessories.length, 0),
-      groupsJson: "[]",
+      groupsJson,
     },
     update: {
       productTitle: product.title,
@@ -287,6 +324,7 @@ export async function saveAccessoryConfig(
       productImage: product.image ?? null,
       groupCount: live.length,
       accessoryCount: live.reduce((s, g) => s + g.accessories.length, 0),
+      groupsJson,
     },
   });
 
@@ -300,8 +338,15 @@ export async function deleteAccessoryConfig(
   productId: string,
 ): Promise<void> {
   const pid = numericId(productId);
-  // Delete our discount nodes (any type) for this product.
-  for (const nodeId of await existingNodeIds(admin, pid)) {
+  const row = await prisma.bundleConfig.findUnique({
+    where: { shop_productId: { shop, productId } },
+  });
+  // Delete our discount nodes: tracked ids + any legacy prefix-titled nodes.
+  const toDelete = new Set([
+    ...parseNodeIds(row?.groupsJson),
+    ...(await existingNodeIds(admin, pid)),
+  ]);
+  for (const nodeId of toDelete) {
     await admin.graphql(
       `#graphql
         mutation AccDelete($id: ID!) {
