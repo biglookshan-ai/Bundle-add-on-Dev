@@ -69,7 +69,12 @@ function nodeTitle(productNumericId: string, accNumericId: string) {
 }
 
 /** BxGy input: buy the MAIN product, get ONE accessory `pct`% off. */
-function bxgyInput(mainId: string, giftId: string, pct: number) {
+function bxgyInput(
+  mainId: string,
+  giftId: string,
+  pct: number,
+  minSpend: number,
+) {
   return {
     title: "", // filled by caller
     combinesWith: {
@@ -80,9 +85,11 @@ function bxgyInput(mainId: string, giftId: string, pct: number) {
     // Minimum SPEND of the main (not a quantity) — a spend threshold is a
     // non-consumed CONDITION, so every per-accessory node can trigger off the
     // SAME single main in the cart. A quantity-based "buy 1" is consumed per
-    // discount, which would force one main per discounted accessory.
+    // discount, which would force one main per discounted accessory. Shopify
+    // requires the amount be >= the cheapest buy product's price, so we use the
+    // main's lowest variant price = "at least one main in the cart".
     customerBuys: {
-      value: { amount: "0.01" },
+      value: { amount: minSpend.toFixed(2) },
       items: { products: { productsToAdd: [mainId] } },
     },
     customerGets: {
@@ -95,6 +102,27 @@ function bxgyInput(mainId: string, giftId: string, pct: number) {
       items: { products: { productsToAdd: [giftId] } },
     },
   };
+}
+
+/** The main product's lowest variant price (the minimum allowed spend threshold). */
+async function mainMinPrice(
+  admin: AdminGraphql,
+  mainId: string,
+): Promise<number> {
+  const resp = await admin.graphql(
+    `#graphql
+      query AccMainPrice($id: ID!) {
+        product(id: $id) {
+          priceRangeV2 { minVariantPrice { amount } }
+        }
+      }`,
+    { variables: { id: mainId } },
+  );
+  const j = await resp.json();
+  const amt = Number(
+    j?.data?.product?.priceRangeV2?.minVariantPrice?.amount,
+  );
+  return Number.isFinite(amt) && amt > 0 ? amt : 0.01;
 }
 
 /** Existing CGP-ACC nodes for this product: title-level → DiscountAutomaticNode id. */
@@ -140,12 +168,14 @@ export async function reconcileAccessoryDiscounts(
   const accessories = discountedAccessories(config); // one entry per accessory
   const existing = await existingNodes(admin, pid);
   const wanted = new Set<string>();
+  // Shopify requires the spend threshold be >= the main's cheapest variant.
+  const minSpend = await mainMinPrice(admin, product.id);
 
   for (const { productId: giftGid, percent: pct } of accessories) {
     const accKey = numericId(giftGid);
     wanted.add(accKey);
     const input = {
-      ...bxgyInput(product.id, giftGid, pct),
+      ...bxgyInput(product.id, giftGid, pct, minSpend),
       title: nodeTitle(pid, accKey),
       startsAt: new Date().toISOString(), // required by Shopify automatic discounts
     };
