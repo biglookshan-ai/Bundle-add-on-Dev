@@ -105,168 +105,237 @@
       });
   }
 
-  // Fixed-bundle mode: every component is required and pre-included; shows a
-  // bundle total (main + components) with the saving, and one "add bundle" CTA.
-  function setupBundle(root, config, host, cta, ctaLabel, currency, pct) {
-    var comps = [];
-    (config.groups || []).forEach(function (g) {
-      if (g.archived) return;
-      (g.accessories || []).forEach(function (a) {
-        comps.push(a);
-      });
+  function paintPrice(priceEl, base, pct, currency) {
+    var now = Math.round(base * (1 - pct / 100));
+    if (pct > 0) {
+      priceEl.innerHTML =
+        '<span class="cgp-acc__old">' +
+        money(base, currency) +
+        "</span>" +
+        (pct >= 100
+          ? '<span class="cgp-acc__free">FREE</span>'
+          : '<span class="cgp-acc__new">' + money(now, currency) + "</span>");
+    } else {
+      priceEl.textContent = money(base, currency);
+    }
+  }
+
+  var bundleGroupSeq = 0;
+
+  // Bundle mode: each group is a standalone, radio-selectable bundle. Only the
+  // chosen bundle's components are added to the cart, so only its native BxGy
+  // fires. Shows a per-bundle total (main + components) with the saving.
+  function setupBundle(root, config, host, cta, ctaLabel, currency, defaultPct) {
+    var groups = (config.groups || []).filter(function (g) {
+      return !g.archived && (g.accessories || []).length;
     });
-    if (!comps.length) return;
+    if (!groups.length) return;
     var mainHandle = root.getAttribute("data-product-handle");
+    var radioName = "cgp-bundle-" + bundleGroupSeq++;
 
     cta.textContent = "";
-    var ctaMain = el("span", "cgp-acc__cta-main", ctaLabel || "Add bundle to cart");
+    var ctaMain = el("span", "cgp-acc__cta-main", ctaLabel || "Add to cart");
     var ctaSub = el("span", "cgp-acc__cta-sub", "");
     cta.appendChild(ctaMain);
     cta.appendChild(ctaSub);
     cta.hidden = false;
 
     var mainBase = 0; // current main variant price (cents)
-    var rows = []; // { getVariantId, base }
-    var summary = el("div", "cgp-acc__summary");
+    var bundles = [];
+    var selectedIdx = -1;
 
-    function paint(priceEl, base) {
-      var now = Math.round(base * (1 - pct / 100));
-      if (pct > 0) {
-        priceEl.innerHTML =
-          '<span class="cgp-acc__old">' +
-          money(base, currency) +
-          "</span>" +
-          (pct >= 100
-            ? '<span class="cgp-acc__free">FREE</span>'
-            : '<span class="cgp-acc__new">' + money(now, currency) + "</span>");
-      } else {
-        priceEl.textContent = money(base, currency);
-      }
-    }
-
-    function recalc() {
-      var compBase = 0;
-      var compSave = 0;
-      rows.forEach(function (r) {
-        compBase += r.base;
-        if (pct > 0) compSave += Math.round((r.base * pct) / 100);
+    function selectBundle(idx) {
+      selectedIdx = idx;
+      bundles.forEach(function (b, i) {
+        b.radio.checked = i === idx;
+        b.tile.classList.toggle("is-selected", i === idx);
+        b.body.hidden = i !== idx;
       });
-      var wasTotal = mainBase + compBase;
-      var nowTotal = wasTotal - compSave;
-      summary.innerHTML = "";
-      summary.appendChild(el("span", "cgp-acc__summary-label", "Bundle price"));
-      summary.appendChild(
-        el("span", "cgp-acc__now", money(nowTotal, currency)),
-      );
-      if (compSave > 0) {
-        summary.appendChild(
-          el("span", "cgp-acc__was", money(wasTotal, currency)),
-        );
-        summary.appendChild(
-          el("span", "cgp-acc__save", "Save " + money(compSave, currency)),
-        );
-        ctaSub.textContent = "You save " + money(compSave, currency);
+      updateCta();
+    }
+    function updateCta() {
+      if (selectedIdx < 0) {
+        ctaSub.style.display = "none";
+        return;
+      }
+      var s = bundles[selectedIdx].currentSave();
+      if (s > 0) {
+        ctaSub.textContent = "You save " + money(s, currency);
         ctaSub.style.display = "";
       } else {
         ctaSub.style.display = "none";
       }
     }
 
-    comps.forEach(function (a) {
-      var row = el("div", "cgp-acc__row is-selected");
-      var media = el("span", "cgp-acc__thumb");
-      var infoCol = el("span", "cgp-acc__info");
-      var name = el("span", "cgp-acc__name", a.title || a.handle);
-      var priceEl = el("span", "cgp-acc__price", "");
-      infoCol.appendChild(name);
-      infoCol.appendChild(priceEl);
-      row.appendChild(media);
-      row.appendChild(infoCol);
-      host.appendChild(row);
+    groups.forEach(function (group, gi) {
+      var pct =
+        Number(group.bundlePercent != null ? group.bundlePercent : defaultPct) ||
+        0;
+      var tile = el("div", "cgp-bundle");
+      var head = el("label", "cgp-bundle__head");
+      var radio = el("input", "cgp-bundle__radio");
+      radio.type = "radio";
+      radio.name = radioName;
+      var headInfo = el("span", "cgp-bundle__headinfo");
+      var nameEl = el(
+        "span",
+        "cgp-bundle__name",
+        group.title || "Bundle " + (gi + 1),
+      );
+      var priceRow = el("span", "cgp-bundle__pricerow");
+      headInfo.appendChild(nameEl);
+      headInfo.appendChild(priceRow);
+      head.appendChild(radio);
+      head.appendChild(headInfo);
+      tile.appendChild(head);
+      var body = el("div", "cgp-bundle__body");
+      body.hidden = true;
+      tile.appendChild(body);
+      host.appendChild(tile);
 
-      var rec = { getVariantId: null, base: 0 };
-      rows.push(rec);
+      radio.addEventListener("change", function () {
+        if (radio.checked) selectBundle(gi);
+      });
 
-      fetchProduct(a.handle).then(function (data) {
-        if (!data) {
-          row.remove();
-          return;
-        }
-        name.textContent = data.title || a.title;
-        var img = data.featured_image || (data.images && data.images[0]);
-        if (img) {
-          var im = el("img");
-          im.src = img;
-          media.appendChild(im);
-        }
-        var offered = offeredVariants(a, data);
-        var v = firstAvailable(offered);
-        if (!v) {
-          row.remove();
-          return;
-        }
-        rec.getVariantId = v.id;
-        rec.base = v.price;
-        paint(priceEl, v.price);
-        if (offered.length > 1) {
-          var sel = el("select", "cgp-acc__variant");
-          offered.forEach(function (o) {
-            var opt = el(
-              "option",
-              null,
-              o.title + (o.available ? "" : " — sold out"),
-            );
-            opt.value = o.id;
-            if (!o.available) opt.disabled = true;
-            sel.appendChild(opt);
+      var rows = [];
+
+      function currentSave() {
+        var s = 0;
+        if (pct > 0)
+          rows.forEach(function (r) {
+            s += Math.round((r.base * pct) / 100);
           });
-          sel.value = v.id;
-          sel.addEventListener("change", function () {
-            var chosen = offered.filter(function (o) {
-              return String(o.id) === String(sel.value);
-            })[0];
-            rec.getVariantId = sel.value;
-            rec.base = chosen ? chosen.price : rec.base;
-            paint(priceEl, rec.base);
-            recalc();
-          });
-          infoCol.appendChild(sel);
+        return s;
+      }
+      function recalc() {
+        var compBase = 0;
+        rows.forEach(function (r) {
+          compBase += r.base;
+        });
+        var save = currentSave();
+        var was = mainBase + compBase;
+        var now = was - save;
+        priceRow.innerHTML = "";
+        priceRow.appendChild(el("span", "cgp-bundle__now", money(now, currency)));
+        if (save > 0) {
+          priceRow.appendChild(
+            el("span", "cgp-bundle__was", money(was, currency)),
+          );
+          priceRow.appendChild(
+            el("span", "cgp-bundle__save", "Save " + money(save, currency)),
+          );
         }
-        recalc();
+        if (selectedIdx === gi) updateCta();
+      }
+
+      group.accessories.forEach(function (a) {
+        var row = el("div", "cgp-acc__row is-selected");
+        var media = el("span", "cgp-acc__thumb");
+        var infoCol = el("span", "cgp-acc__info");
+        var cname = el("span", "cgp-acc__name", a.title || a.handle);
+        var priceEl = el("span", "cgp-acc__price", "");
+        infoCol.appendChild(cname);
+        infoCol.appendChild(priceEl);
+        row.appendChild(media);
+        row.appendChild(infoCol);
+        body.appendChild(row);
+
+        var rec = { getVariantId: null, base: 0 };
+        rows.push(rec);
+
+        fetchProduct(a.handle).then(function (data) {
+          if (!data) {
+            row.remove();
+            return;
+          }
+          cname.textContent = data.title || a.title;
+          var img = data.featured_image || (data.images && data.images[0]);
+          if (img) {
+            var im = el("img");
+            im.src = img;
+            media.appendChild(im);
+          }
+          var offered = offeredVariants(a, data);
+          var v = firstAvailable(offered);
+          if (!v) {
+            row.remove();
+            return;
+          }
+          rec.getVariantId = v.id;
+          rec.base = v.price;
+          paintPrice(priceEl, v.price, pct, currency);
+          if (offered.length > 1) {
+            var sel = el("select", "cgp-acc__variant");
+            offered.forEach(function (o) {
+              var opt = el(
+                "option",
+                null,
+                o.title + (o.available ? "" : " — sold out"),
+              );
+              opt.value = o.id;
+              if (!o.available) opt.disabled = true;
+              sel.appendChild(opt);
+            });
+            sel.value = v.id;
+            sel.addEventListener("change", function () {
+              var chosen = offered.filter(function (o) {
+                return String(o.id) === String(sel.value);
+              })[0];
+              rec.getVariantId = sel.value;
+              rec.base = chosen ? chosen.price : rec.base;
+              paintPrice(priceEl, rec.base, pct, currency);
+              recalc();
+            });
+            infoCol.appendChild(sel);
+          }
+          recalc();
+        });
+      });
+
+      bundles.push({
+        tile: tile,
+        body: body,
+        radio: radio,
+        rows: rows,
+        recalc: recalc,
+        currentSave: currentSave,
       });
     });
 
-    host.appendChild(summary);
-
     function loadMain() {
       if (!mainHandle) {
-        recalc();
+        bundles.forEach(function (b) {
+          b.recalc();
+        });
         return;
       }
       fetchProduct(mainHandle).then(function (data) {
-        if (!data) {
-          recalc();
-          return;
+        if (data) {
+          var cur = mainVariantId();
+          var mv = null;
+          (data.variants || []).forEach(function (v) {
+            if (String(v.id) === String(cur)) mv = v;
+          });
+          if (!mv) mv = firstAvailable(data.variants);
+          mainBase = mv ? mv.price : 0;
         }
-        var cur = mainVariantId();
-        var mv = null;
-        (data.variants || []).forEach(function (v) {
-          if (String(v.id) === String(cur)) mv = v;
+        bundles.forEach(function (b) {
+          b.recalc();
         });
-        if (!mv) mv = firstAvailable(data.variants);
-        mainBase = mv ? mv.price : 0;
-        recalc();
       });
     }
     loadMain();
     var form = document.querySelector('form[action*="/cart/add"]');
     if (form) form.addEventListener("change", loadMain);
 
+    selectBundle(0);
+
     cta.addEventListener("click", function () {
+      if (selectedIdx < 0) return;
       var items = [];
       var mv = mainVariantId();
       if (mv) items.push({ id: mv, quantity: 1 });
-      rows.forEach(function (r) {
+      bundles[selectedIdx].rows.forEach(function (r) {
         if (r.getVariantId) items.push({ id: r.getVariantId, quantity: 1 });
       });
       if (!items.length) return;

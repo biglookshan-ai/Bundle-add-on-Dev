@@ -3,6 +3,7 @@ import {
   ACC_METAFIELD_NAMESPACE,
   ACC_METAFIELD_KEY,
   EMPTY_ACC_CONFIG,
+  clampPct,
   offerAccessoryGids,
   parseAccConfig,
   type AccessoryConfig,
@@ -142,12 +143,6 @@ export async function reconcileAccessoryDiscounts(
 ): Promise<string[]> {
   const errors: string[] = [];
   const pid = numericId(product.id);
-  const giftIds = offerAccessoryGids(config);
-  const pct = config.offerPercent ?? 0;
-  // Bundle mode: the whole set is required, so the discount needs all components.
-  const qty = config.bundleMode
-    ? Math.max(1, giftIds.length)
-    : config.offerQuantity ?? 1;
 
   // Wipe our existing nodes (any type) first — clean migration + no stale nodes.
   for (const nodeId of await existingNodeIds(admin, pid)) {
@@ -163,25 +158,58 @@ export async function reconcileAccessoryDiscounts(
       errors.push(e.message);
   }
 
-  if (pct <= 0 || giftIds.length === 0) return errors; // full-price only → no node
+  // One BxGy per node we want to (re)create: { title, giftIds, pct, qty }.
+  const nodes: { title: string; giftIds: string[]; pct: number; qty: number }[] =
+    [];
 
-  const input = {
-    ...bxgyInput(product.id, giftIds, pct, qty),
-    title: nodeTitle(pid),
-    startsAt: new Date().toISOString(), // required by Shopify automatic discounts
-  };
-  const resp = await admin.graphql(
-    `#graphql
-      mutation AccCreate($d: DiscountAutomaticBxgyInput!) {
-        discountAutomaticBxgyCreate(automaticBxgyDiscount: $d) {
-          userErrors { message }
-        }
-      }`,
-    { variables: { d: input } },
-  );
-  const j = await resp.json();
-  for (const e of j?.data?.discountAutomaticBxgyCreate?.userErrors ?? [])
-    errors.push(e.message);
+  if (config.bundleMode) {
+    // Each group is its OWN bundle → its own node (buy main → get all its
+    // components at that bundle's rate). Multiple nodes coexist safely because
+    // the customer only ever adds one bundle's components at a time, so only that
+    // node's "get" items are in the cart and only it consumes the main.
+    for (const g of config.groups) {
+      if (g.archived) continue;
+      const ids = [...new Set(g.accessories.map((a) => a.productId))];
+      const pct = clampPct(g.bundlePercent ?? config.offerPercent ?? 0);
+      if (pct <= 0 || ids.length === 0) continue;
+      nodes.push({
+        title: `CGP-ACC ${pid}:${g.id}`,
+        giftIds: ids,
+        pct,
+        qty: ids.length, // the whole bundle is required
+      });
+    }
+  } else {
+    const giftIds = offerAccessoryGids(config);
+    const pct = clampPct(config.offerPercent ?? 0);
+    if (pct > 0 && giftIds.length > 0)
+      nodes.push({
+        title: nodeTitle(pid),
+        giftIds,
+        pct,
+        qty: config.offerQuantity ?? 1,
+      });
+  }
+
+  for (const n of nodes) {
+    const input = {
+      ...bxgyInput(product.id, n.giftIds, n.pct, n.qty),
+      title: n.title,
+      startsAt: new Date().toISOString(), // required by Shopify automatic discounts
+    };
+    const resp = await admin.graphql(
+      `#graphql
+        mutation AccCreate($d: DiscountAutomaticBxgyInput!) {
+          discountAutomaticBxgyCreate(automaticBxgyDiscount: $d) {
+            userErrors { message }
+          }
+        }`,
+      { variables: { d: input } },
+    );
+    const j = await resp.json();
+    for (const e of j?.data?.discountAutomaticBxgyCreate?.userErrors ?? [])
+      errors.push(e.message);
+  }
 
   return errors;
 }

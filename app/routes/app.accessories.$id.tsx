@@ -204,30 +204,26 @@ export default function AccessoryEditor() {
               The offer
             </Text>
             <Checkbox
-              label="Sell as a fixed bundle"
+              label="Sell as fixed bundles"
               checked={bundleMode}
               onChange={setBundleMode}
-              helpText="All items below are required and pre-selected. The customer adds the whole set with one button and gets the discount on the components."
+              helpText="Each group below becomes its own bundle. The customer picks one bundle, adds the whole set with one button, and gets that bundle’s discount on the components."
             />
-            <InlineStack gap="400" blockAlign="start">
-              <Box width="160px">
-                <TextField
-                  label="Discount rate"
-                  type="number"
-                  min={0}
-                  max={100}
-                  suffix="% off"
-                  autoComplete="off"
-                  value={String(offerPercent)}
-                  onChange={(v) => setOfferPercent(clampPct(v))}
-                  helpText={
-                    bundleMode
-                      ? "Off the bundle components (the main product stays full price)."
-                      : "Same rate for every accessory."
-                  }
-                />
-              </Box>
-              {!bundleMode && (
+            {!bundleMode && (
+              <InlineStack gap="400" blockAlign="start">
+                <Box width="160px">
+                  <TextField
+                    label="Discount rate"
+                    type="number"
+                    min={0}
+                    max={100}
+                    suffix="% off"
+                    autoComplete="off"
+                    value={String(offerPercent)}
+                    onChange={(v) => setOfferPercent(clampPct(v))}
+                    helpText="Same rate for every accessory."
+                  />
+                </Box>
                 <Box width="200px">
                   <TextField
                     label="Required accessories"
@@ -241,11 +237,11 @@ export default function AccessoryEditor() {
                     helpText="How many the customer must add to get the discount."
                   />
                 </Box>
-              )}
-            </InlineStack>
+              </InlineStack>
+            )}
             <Text as="p" variant="bodySm" tone="subdued">
               {bundleMode
-                ? "Bundle: the customer must add all components below (the main product + every item) to get the discount. The main product itself isn’t discounted — put the cheapest item as the main, or raise the rate to hit your target bundle price."
+                ? "Each group = one bundle with its own name and discount rate. The customer picks one bundle and adds the whole set. The main product itself isn’t discounted — put the cheapest item as the main, or raise the rate to hit your target bundle price."
                 : "Example: rate 15% + required 1 → “buy this product, add any 1 accessory below and get 15% off it”. Required 2 → they must add 2."}
             </Text>
           </BlockStack>
@@ -261,10 +257,28 @@ export default function AccessoryEditor() {
                       label="Group title"
                       labelHidden
                       autoComplete="off"
+                      placeholder={bundleMode ? "Bundle name" : "Group title"}
                       value={group.title}
                       onChange={(v) => setGroup(group.id, { title: v })}
                     />
                   </Box>
+                  {bundleMode && (
+                    <Box width="130px">
+                      <TextField
+                        label="Bundle discount"
+                        labelHidden
+                        type="number"
+                        min={0}
+                        max={100}
+                        suffix="% off"
+                        autoComplete="off"
+                        value={String(group.bundlePercent ?? offerPercent)}
+                        onChange={(v) =>
+                          setGroup(group.id, { bundlePercent: clampPct(v) })
+                        }
+                      />
+                    </Box>
+                  )}
                   {!bundleMode && (
                     <Box width="150px">
                       <Select
@@ -341,7 +355,9 @@ export default function AccessoryEditor() {
 
               {group.accessories.map((a) => {
                 const price = prices[a.productId];
-                const pct = offerPercent;
+                const pct = bundleMode
+                  ? group.bundlePercent ?? offerPercent
+                  : offerPercent;
                 const now = price != null ? price * (1 - pct / 100) : null;
                 const accVariants = variants[a.productId] ?? [];
                 const offered = a.variantIds ?? [];
@@ -374,8 +390,8 @@ export default function AccessoryEditor() {
                       </BlockStack>
                     </InlineStack>
                     <InlineStack gap="200" blockAlign="center">
-                      {offerPercent > 0 && (
-                        <Badge tone="attention">{`${offerPercent}% off`}</Badge>
+                      {pct > 0 && (
+                        <Badge tone="attention">{`${pct}% off`}</Badge>
                       )}
                       <Button
                         icon={DeleteIcon}

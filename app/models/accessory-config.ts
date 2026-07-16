@@ -36,6 +36,11 @@ export type AccessoryGroup = {
   /** single = pick at most one; multi = pick any number. */
   selectMode: "single" | "multi";
   /**
+   * Bundle mode only: this group IS a standalone bundle with its own discount
+   * rate (%). Falls back to the config-level offerPercent when unset.
+   */
+  bundlePercent?: number;
+  /**
    * Show this group only when the selected MAIN variant is one of these
    * (variant gids). Empty / undefined = always show.
    */
@@ -122,6 +127,10 @@ export function parseAccConfig(raw: string | null | undefined): AccessoryConfig 
           };
           if (typeof g?.subtitle === "string" && g.subtitle.trim())
             group.subtitle = g.subtitle.trim();
+          if (g?.bundlePercent != null) {
+            const bp = clampPct(g.bundlePercent);
+            if (bp > 0) group.bundlePercent = bp;
+          }
           if (Array.isArray(g?.mainVariantIds)) {
             const ids = g.mainVariantIds.filter(
               (x: any) => typeof x === "string" && x,
