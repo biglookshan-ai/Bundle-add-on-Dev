@@ -135,7 +135,11 @@ export async function reconcileAccessoryDiscounts(
     if (!giftIds.length) continue;
     const levelKey = String(pct);
     wanted.add(levelKey);
-    const input = { ...bxgyInput(product.id, giftIds, pct), title: nodeTitle(pid, pct) };
+    const input = {
+      ...bxgyInput(product.id, giftIds, pct),
+      title: nodeTitle(pid, pct),
+      startsAt: new Date().toISOString(), // required by Shopify automatic discounts
+    };
     const nodeId = existing.get(levelKey);
     if (nodeId) {
       const resp = await admin.graphql(
