@@ -45,15 +45,17 @@ export async function readAccConfig(
 
 /**
  * Server-only operations for the Function-FREE accessory config. Discounts are
- * NATIVE "Buy X Get Y" automatic discounts (work on any plan). Each product gets
- * ONE BxGy node PER DISCOUNTED ACCESSORY (buy main → get that one accessory,
- * quantity 1, its own %), scoped by a title prefix so we can create / update /
- * delete just this product's nodes.
+ * NATIVE "Amount off products" automatic discounts (DiscountAutomaticBasic —
+ * work on any plan). Each product gets ONE Basic node PER DISCOUNT LEVEL
+ * (e.g. 5% off, 10% off, 100%/free), each listing every accessory at that %.
  *
- * Per-accessory (not per-%-level) because Shopify's get-quantity is a hard
- * threshold: a single node with "get N" only applies when N eligible items are
- * present and discounts exactly N. Quantity-1-per-accessory + combinesWith lets
- * every selected accessory be discounted independently, however many are chosen.
+ * Why Basic and not "Buy X Get Y": in BxGy the "customer buys" side (whether a
+ * quantity OR a spend amount) is CONSUMED per discount, so two stacked BxGy
+ * nodes each demand their own main — only one accessory ever gets discounted.
+ * A Basic product discount instead discounts every matching line independently
+ * and stacks cleanly. To approximate "only when the main is bought" we gate it
+ * behind a minimum cart SUBTOTAL equal to the main's price (a non-consumed
+ * qualification), so a lone accessory purchase doesn't qualify.
  */
 
 type AdminGraphql = {
@@ -63,48 +65,34 @@ type AdminGraphql = {
 function numericId(gid: string) {
   return gid.replace("gid://shopify/Product/", "");
 }
-/** Title encodes the product + accessory so we only ever touch our own nodes. */
-function nodeTitle(productNumericId: string, accNumericId: string) {
-  return `CGP-ACC ${productNumericId}:${accNumericId}`;
+/** Title encodes the product + level so we only ever touch our own nodes. */
+function nodeTitle(productNumericId: string, pct: number) {
+  return `CGP-ACC ${productNumericId}:${pct}`;
 }
 
-/** BxGy input: buy the MAIN product, get ONE accessory `pct`% off. */
-function bxgyInput(
-  mainId: string,
-  giftId: string,
-  pct: number,
-  minSpend: number,
-) {
+/**
+ * Basic "amount off products" input: `pct`% off these accessories, but only when
+ * the cart subtotal reaches `minSpend` (≈ the main is in the cart).
+ */
+function basicInput(giftIds: string[], pct: number, minSpend: number) {
   return {
     title: "", // filled by caller
     combinesWith: {
       orderDiscounts: true,
-      productDiscounts: true, // stack with our other per-accessory nodes
+      productDiscounts: true, // stack with our other per-level nodes
       shippingDiscounts: true,
     },
-    // Minimum SPEND of the main (not a quantity) — a spend threshold is a
-    // non-consumed CONDITION, so every per-accessory node can trigger off the
-    // SAME single main in the cart. A quantity-based "buy 1" is consumed per
-    // discount, which would force one main per discounted accessory. Shopify
-    // requires the amount be >= the cheapest buy product's price, so we use the
-    // main's lowest variant price = "at least one main in the cart".
-    customerBuys: {
-      value: { amount: minSpend.toFixed(2) },
-      items: { products: { productsToAdd: [mainId] } },
+    minimumRequirement: {
+      subtotal: { greaterThanOrEqualToSubtotal: minSpend.toFixed(2) },
     },
     customerGets: {
-      value: {
-        discountOnQuantity: {
-          quantity: "1", // one accessory, discounted on its own
-          effect: { percentage: Math.min(1, Math.max(0, pct / 100)) },
-        },
-      },
-      items: { products: { productsToAdd: [giftId] } },
+      value: { percentage: Math.min(1, Math.max(0, pct / 100)) },
+      items: { products: { productsToAdd: giftIds } },
     },
   };
 }
 
-/** The main product's lowest variant price (the minimum allowed spend threshold). */
+/** The main product's lowest variant price — used as the qualifying subtotal. */
 async function mainMinPrice(
   admin: AdminGraphql,
   mainId: string,
@@ -125,39 +113,44 @@ async function mainMinPrice(
   return Number.isFinite(amt) && amt > 0 ? amt : 0.01;
 }
 
-/** Existing CGP-ACC nodes for this product: title-level → DiscountAutomaticNode id. */
-async function existingNodes(
+/**
+ * Every existing CGP-ACC discount node id for this product, of ANY type
+ * (Basic or the legacy Bxgy), matched by the title prefix — so we can wipe them
+ * before recreating and cleanly migrate off the old BxGy nodes.
+ */
+async function existingNodeIds(
   admin: AdminGraphql,
   productNumericId: string,
-): Promise<Map<string, string>> {
+): Promise<string[]> {
   const resp = await admin.graphql(
     `#graphql
       query AccNodes {
         discountNodes(first: 250) {
           nodes {
             id
-            discount { __typename ... on DiscountAutomaticBxgy { title } }
+            discount {
+              __typename
+              ... on DiscountAutomaticBasic { title }
+              ... on DiscountAutomaticBxgy { title }
+            }
           }
         }
       }`,
   );
   const json = await resp.json();
   const prefix = `CGP-ACC ${productNumericId}:`;
-  const map = new Map<string, string>();
+  const ids: string[] = [];
   for (const n of json?.data?.discountNodes?.nodes ?? []) {
     const title = n?.discount?.title;
     if (typeof title === "string" && title.startsWith(prefix)) {
       const numeric = String(n.id).split("/").pop();
-      map.set(
-        title.slice(prefix.length),
-        `gid://shopify/DiscountAutomaticNode/${numeric}`,
-      );
+      ids.push(`gid://shopify/DiscountAutomaticNode/${numeric}`);
     }
   }
-  return map;
+  return ids;
 }
 
-/** Make this product's BxGy discount nodes match its config (create/update/delete). */
+/** Make this product's discount nodes match its config (wipe + recreate). */
 export async function reconcileAccessoryDiscounts(
   admin: AdminGraphql,
   product: ProductSummary,
@@ -165,53 +158,17 @@ export async function reconcileAccessoryDiscounts(
 ): Promise<string[]> {
   const errors: string[] = [];
   const pid = numericId(product.id);
-  const accessories = discountedAccessories(config); // one entry per accessory
-  const existing = await existingNodes(admin, pid);
-  const wanted = new Set<string>();
-  // Shopify requires the spend threshold be >= the main's cheapest variant.
-  const minSpend = await mainMinPrice(admin, product.id);
 
-  for (const { productId: giftGid, percent: pct } of accessories) {
-    const accKey = numericId(giftGid);
-    wanted.add(accKey);
-    const input = {
-      ...bxgyInput(product.id, giftGid, pct, minSpend),
-      title: nodeTitle(pid, accKey),
-      startsAt: new Date().toISOString(), // required by Shopify automatic discounts
-    };
-    const nodeId = existing.get(accKey);
-    if (nodeId) {
-      const resp = await admin.graphql(
-        `#graphql
-          mutation AccUpdate($id: ID!, $d: DiscountAutomaticBxgyInput!) {
-            discountAutomaticBxgyUpdate(id: $id, automaticBxgyDiscount: $d) {
-              userErrors { message }
-            }
-          }`,
-        { variables: { id: nodeId, d: input } },
-      );
-      const j = await resp.json();
-      for (const e of j?.data?.discountAutomaticBxgyUpdate?.userErrors ?? [])
-        errors.push(e.message);
-    } else {
-      const resp = await admin.graphql(
-        `#graphql
-          mutation AccCreate($d: DiscountAutomaticBxgyInput!) {
-            discountAutomaticBxgyCreate(automaticBxgyDiscount: $d) {
-              userErrors { message }
-            }
-          }`,
-        { variables: { d: input } },
-      );
-      const j = await resp.json();
-      for (const e of j?.data?.discountAutomaticBxgyCreate?.userErrors ?? [])
-        errors.push(e.message);
-    }
+  // One entry per accessory (highest %), grouped into discount levels.
+  const byPct = new Map<number, string[]>();
+  for (const { productId, percent } of discountedAccessories(config)) {
+    const list = byPct.get(percent) ?? [];
+    list.push(productId);
+    byPct.set(percent, list);
   }
 
-  // Delete nodes for accessories this product no longer discounts.
-  for (const [accKey, nodeId] of existing) {
-    if (wanted.has(accKey)) continue;
+  // Wipe our existing nodes (any type) first — clean migration + no stale levels.
+  for (const nodeId of await existingNodeIds(admin, pid)) {
     const resp = await admin.graphql(
       `#graphql
         mutation AccDelete($id: ID!) {
@@ -221,6 +178,30 @@ export async function reconcileAccessoryDiscounts(
     );
     const j = await resp.json();
     for (const e of j?.data?.discountAutomaticDelete?.userErrors ?? [])
+      errors.push(e.message);
+  }
+
+  if (byPct.size === 0) return errors;
+
+  const minSpend = await mainMinPrice(admin, product.id);
+  for (const [pct, giftIds] of byPct) {
+    if (!giftIds.length) continue;
+    const input = {
+      ...basicInput(giftIds, pct, minSpend),
+      title: nodeTitle(pid, pct),
+      startsAt: new Date().toISOString(), // required by Shopify automatic discounts
+    };
+    const resp = await admin.graphql(
+      `#graphql
+        mutation AccCreate($d: DiscountAutomaticBasicInput!) {
+          discountAutomaticBasicCreate(automaticBasicDiscount: $d) {
+            userErrors { message }
+          }
+        }`,
+      { variables: { d: input } },
+    );
+    const j = await resp.json();
+    for (const e of j?.data?.discountAutomaticBasicCreate?.userErrors ?? [])
       errors.push(e.message);
   }
 
