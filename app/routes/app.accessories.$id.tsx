@@ -18,6 +18,7 @@ import {
   Divider,
   ChoiceList,
   Collapsible,
+  Checkbox,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { ImageIcon, DeleteIcon } from "@shopify/polaris-icons";
@@ -88,6 +89,9 @@ export default function AccessoryEditor() {
   const [offerQuantity, setOfferQuantity] = useState<number>(
     initial.offerQuantity ?? 1,
   );
+  const [bundleMode, setBundleMode] = useState<boolean>(
+    initial.bundleMode ?? false,
+  );
   // Which accessory rows have their "limit variants" panel open.
   const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
   const busy = fetcher.state !== "idle";
@@ -157,6 +161,7 @@ export default function AccessoryEditor() {
           groups,
           offerPercent: clampPct(offerPercent),
           offerQuantity: Math.max(1, Math.round(offerQuantity) || 1),
+          bundleMode,
         }),
       },
       { method: "POST" },
@@ -186,6 +191,12 @@ export default function AccessoryEditor() {
             <Text as="h2" variant="headingMd">
               The offer
             </Text>
+            <Checkbox
+              label="Sell as a fixed bundle"
+              checked={bundleMode}
+              onChange={setBundleMode}
+              helpText="All items below are required and pre-selected. The customer adds the whole set with one button and gets the discount on the components."
+            />
             <InlineStack gap="400" blockAlign="start">
               <Box width="160px">
                 <TextField
@@ -197,26 +208,33 @@ export default function AccessoryEditor() {
                   autoComplete="off"
                   value={String(offerPercent)}
                   onChange={(v) => setOfferPercent(clampPct(v))}
-                  helpText="Same rate for every accessory."
-                />
-              </Box>
-              <Box width="200px">
-                <TextField
-                  label="Required accessories"
-                  type="number"
-                  min={1}
-                  autoComplete="off"
-                  value={String(offerQuantity)}
-                  onChange={(v) =>
-                    setOfferQuantity(Math.max(1, Math.round(Number(v)) || 1))
+                  helpText={
+                    bundleMode
+                      ? "Off the bundle components (the main product stays full price)."
+                      : "Same rate for every accessory."
                   }
-                  helpText="How many the customer must add to get the discount."
                 />
               </Box>
+              {!bundleMode && (
+                <Box width="200px">
+                  <TextField
+                    label="Required accessories"
+                    type="number"
+                    min={1}
+                    autoComplete="off"
+                    value={String(offerQuantity)}
+                    onChange={(v) =>
+                      setOfferQuantity(Math.max(1, Math.round(Number(v)) || 1))
+                    }
+                    helpText="How many the customer must add to get the discount."
+                  />
+                </Box>
+              )}
             </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              Example: rate 15% + required 1 → “buy this product, add any 1
-              accessory below and get 15% off it”. Required 2 → they must add 2.
+              {bundleMode
+                ? "Bundle: the customer must add all components below (the main product + every item) to get the discount. The main product itself isn’t discounted — put the cheapest item as the main, or raise the rate to hit your target bundle price."
+                : "Example: rate 15% + required 1 → “buy this product, add any 1 accessory below and get 15% off it”. Required 2 → they must add 2."}
             </Text>
           </BlockStack>
         </Card>

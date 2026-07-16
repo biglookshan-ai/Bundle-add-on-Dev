@@ -55,6 +55,12 @@ export type AccessoryConfig = {
    */
   offerPercent?: number; // 1–100
   offerQuantity?: number; // how many accessories the customer must add
+  /**
+   * Bundle mode: the accessories are a FIXED set sold together. Every component
+   * is required and pre-selected on the storefront; required quantity is forced
+   * to the component count so the discount only applies to the whole set.
+   */
+  bundleMode?: boolean;
 };
 
 export const EMPTY_ACC_CONFIG: AccessoryConfig = { version: 1, groups: [] };
@@ -134,6 +140,7 @@ export function parseAccConfig(raw: string | null | undefined): AccessoryConfig 
       const q = Math.round(Number(data.offerQuantity));
       if (Number.isFinite(q) && q > 0) cfg.offerQuantity = q;
     }
+    if (data?.bundleMode) cfg.bundleMode = true;
     return cfg;
   } catch {
     return { ...EMPTY_ACC_CONFIG };

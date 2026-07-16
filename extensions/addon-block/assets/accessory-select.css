@@ -113,6 +113,36 @@
   font: inherit;
   color: inherit;
 }
+.cgp-acc__summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 12px 0;
+  border-top: 1px solid var(--cgp-acc-border);
+}
+.cgp-acc__summary-label {
+  font-weight: 600;
+  font-size: 15px;
+}
+.cgp-acc__now {
+  font-weight: 700;
+  font-size: 18px;
+}
+.cgp-acc__was {
+  color: var(--cgp-acc-muted);
+  text-decoration: line-through;
+}
+.cgp-acc__save {
+  margin-left: auto;
+  background: var(--cgp-acc-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
 .cgp-acc__cta {
   width: 100%;
   margin-top: 6px;

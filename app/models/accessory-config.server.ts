@@ -144,7 +144,10 @@ export async function reconcileAccessoryDiscounts(
   const pid = numericId(product.id);
   const giftIds = offerAccessoryGids(config);
   const pct = config.offerPercent ?? 0;
-  const qty = config.offerQuantity ?? 1;
+  // Bundle mode: the whole set is required, so the discount needs all components.
+  const qty = config.bundleMode
+    ? Math.max(1, giftIds.length)
+    : config.offerQuantity ?? 1;
 
   // Wipe our existing nodes (any type) first — clean migration + no stale nodes.
   for (const nodeId of await existingNodeIds(admin, pid)) {

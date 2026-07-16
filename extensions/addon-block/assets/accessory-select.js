@@ -68,6 +68,213 @@
     return m ? m[1] : null;
   }
 
+  // Shared add-to-cart (re-renders the theme's cart drawer when possible).
+  function addToCart(items, cta) {
+    if (!items.length) return;
+    var drawer =
+      document.querySelector("cart-notification") ||
+      document.querySelector("cart-drawer");
+    var body = { items: items };
+    if (drawer && typeof drawer.getSectionsToRender === "function") {
+      body.sections = drawer.getSectionsToRender().map(function (s) {
+        return s.id;
+      });
+      body.sections_url = window.location.pathname;
+    }
+    fetch("/cart/add.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (resp) {
+        if (cta) cta.disabled = false;
+        if (drawer && typeof drawer.renderContents === "function" && resp.sections) {
+          drawer.classList.remove("is-empty");
+          try {
+            drawer.renderContents(resp);
+          } catch (e) {}
+        } else {
+          window.location.href = "/cart";
+        }
+      })
+      .catch(function () {
+        if (cta) cta.disabled = false;
+      });
+  }
+
+  // Fixed-bundle mode: every component is required and pre-included; shows a
+  // bundle total (main + components) with the saving, and one "add bundle" CTA.
+  function setupBundle(root, config, host, cta, ctaLabel, currency, pct) {
+    var comps = [];
+    (config.groups || []).forEach(function (g) {
+      if (g.archived) return;
+      (g.accessories || []).forEach(function (a) {
+        comps.push(a);
+      });
+    });
+    if (!comps.length) return;
+    var mainHandle = root.getAttribute("data-product-handle");
+
+    cta.textContent = "";
+    var ctaMain = el("span", "cgp-acc__cta-main", ctaLabel || "Add bundle to cart");
+    var ctaSub = el("span", "cgp-acc__cta-sub", "");
+    cta.appendChild(ctaMain);
+    cta.appendChild(ctaSub);
+    cta.hidden = false;
+
+    var mainBase = 0; // current main variant price (cents)
+    var rows = []; // { getVariantId, base }
+    var summary = el("div", "cgp-acc__summary");
+
+    function paint(priceEl, base) {
+      var now = Math.round(base * (1 - pct / 100));
+      if (pct > 0) {
+        priceEl.innerHTML =
+          '<span class="cgp-acc__old">' +
+          money(base, currency) +
+          "</span>" +
+          (pct >= 100
+            ? '<span class="cgp-acc__free">FREE</span>'
+            : '<span class="cgp-acc__new">' + money(now, currency) + "</span>");
+      } else {
+        priceEl.textContent = money(base, currency);
+      }
+    }
+
+    function recalc() {
+      var compBase = 0;
+      var compSave = 0;
+      rows.forEach(function (r) {
+        compBase += r.base;
+        if (pct > 0) compSave += Math.round((r.base * pct) / 100);
+      });
+      var wasTotal = mainBase + compBase;
+      var nowTotal = wasTotal - compSave;
+      summary.innerHTML = "";
+      summary.appendChild(el("span", "cgp-acc__summary-label", "Bundle price"));
+      summary.appendChild(
+        el("span", "cgp-acc__now", money(nowTotal, currency)),
+      );
+      if (compSave > 0) {
+        summary.appendChild(
+          el("span", "cgp-acc__was", money(wasTotal, currency)),
+        );
+        summary.appendChild(
+          el("span", "cgp-acc__save", "Save " + money(compSave, currency)),
+        );
+        ctaSub.textContent = "You save " + money(compSave, currency);
+        ctaSub.style.display = "";
+      } else {
+        ctaSub.style.display = "none";
+      }
+    }
+
+    comps.forEach(function (a) {
+      var row = el("div", "cgp-acc__row is-selected");
+      var media = el("span", "cgp-acc__thumb");
+      var infoCol = el("span", "cgp-acc__info");
+      var name = el("span", "cgp-acc__name", a.title || a.handle);
+      var priceEl = el("span", "cgp-acc__price", "");
+      infoCol.appendChild(name);
+      infoCol.appendChild(priceEl);
+      row.appendChild(media);
+      row.appendChild(infoCol);
+      host.appendChild(row);
+
+      var rec = { getVariantId: null, base: 0 };
+      rows.push(rec);
+
+      fetchProduct(a.handle).then(function (data) {
+        if (!data) {
+          row.remove();
+          return;
+        }
+        name.textContent = data.title || a.title;
+        var img = data.featured_image || (data.images && data.images[0]);
+        if (img) {
+          var im = el("img");
+          im.src = img;
+          media.appendChild(im);
+        }
+        var offered = offeredVariants(a, data);
+        var v = firstAvailable(offered);
+        if (!v) {
+          row.remove();
+          return;
+        }
+        rec.getVariantId = v.id;
+        rec.base = v.price;
+        paint(priceEl, v.price);
+        if (offered.length > 1) {
+          var sel = el("select", "cgp-acc__variant");
+          offered.forEach(function (o) {
+            var opt = el(
+              "option",
+              null,
+              o.title + (o.available ? "" : " — sold out"),
+            );
+            opt.value = o.id;
+            if (!o.available) opt.disabled = true;
+            sel.appendChild(opt);
+          });
+          sel.value = v.id;
+          sel.addEventListener("change", function () {
+            var chosen = offered.filter(function (o) {
+              return String(o.id) === String(sel.value);
+            })[0];
+            rec.getVariantId = sel.value;
+            rec.base = chosen ? chosen.price : rec.base;
+            paint(priceEl, rec.base);
+            recalc();
+          });
+          infoCol.appendChild(sel);
+        }
+        recalc();
+      });
+    });
+
+    host.appendChild(summary);
+
+    function loadMain() {
+      if (!mainHandle) {
+        recalc();
+        return;
+      }
+      fetchProduct(mainHandle).then(function (data) {
+        if (!data) {
+          recalc();
+          return;
+        }
+        var cur = mainVariantId();
+        var mv = null;
+        (data.variants || []).forEach(function (v) {
+          if (String(v.id) === String(cur)) mv = v;
+        });
+        if (!mv) mv = firstAvailable(data.variants);
+        mainBase = mv ? mv.price : 0;
+        recalc();
+      });
+    }
+    loadMain();
+    var form = document.querySelector('form[action*="/cart/add"]');
+    if (form) form.addEventListener("change", loadMain);
+
+    cta.addEventListener("click", function () {
+      var items = [];
+      var mv = mainVariantId();
+      if (mv) items.push({ id: mv, quantity: 1 });
+      rows.forEach(function (r) {
+        if (r.getVariantId) items.push({ id: r.getVariantId, quantity: 1 });
+      });
+      if (!items.length) return;
+      cta.disabled = true;
+      addToCart(items, cta);
+    });
+  }
+
   function init(root) {
     if (root.__cgpAcc) return;
     root.__cgpAcc = true;
@@ -88,6 +295,11 @@
     var host = root.querySelector("[data-cgp-acc-groups]");
     var cta = root.querySelector("[data-cgp-acc-cta]");
     var ctaLabel = cta.getAttribute("data-label") || "Add to cart";
+
+    if (config.bundleMode) {
+      setupBundle(root, config, host, cta, ctaLabel, currency, offerPercent);
+      return;
+    }
 
     // selected: itemProductId -> { variantId, group, base(cents), pct }
     var selected = {};
@@ -335,38 +547,7 @@
       });
       if (!items.length) return;
       cta.disabled = true;
-      var drawer =
-        document.querySelector("cart-notification") ||
-        document.querySelector("cart-drawer");
-      var body = { items: items };
-      if (drawer && typeof drawer.getSectionsToRender === "function") {
-        body.sections = drawer.getSectionsToRender().map(function (s) {
-          return s.id;
-        });
-        body.sections_url = window.location.pathname;
-      }
-      fetch("/cart/add.js", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
-      })
-        .then(function (r) {
-          return r.json();
-        })
-        .then(function (resp) {
-          cta.disabled = false;
-          if (drawer && typeof drawer.renderContents === "function" && resp.sections) {
-            drawer.classList.remove("is-empty");
-            try {
-              drawer.renderContents(resp);
-            } catch (e) {}
-          } else {
-            window.location.href = "/cart";
-          }
-        })
-        .catch(function () {
-          cta.disabled = false;
-        });
+      addToCart(items, cta);
     });
   }
 
