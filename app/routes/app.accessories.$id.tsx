@@ -27,7 +27,6 @@ import { fetchProductPrices } from "../models/addon-config.server";
 import {
   newAccGroupId,
   clampPct,
-  itemPercent,
   type AccessoryConfig,
   type AccessoryGroup,
   type AccessoryItem,
@@ -83,6 +82,12 @@ export default function AccessoryEditor() {
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const [groups, setGroups] = useState<AccessoryGroup[]>(initial.groups);
+  const [offerPercent, setOfferPercent] = useState<number>(
+    initial.offerPercent ?? 10,
+  );
+  const [offerQuantity, setOfferQuantity] = useState<number>(
+    initial.offerQuantity ?? 1,
+  );
   // Which accessory rows have their "limit variants" panel open.
   const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
   const busy = fetcher.state !== "idle";
@@ -146,7 +151,14 @@ export default function AccessoryEditor() {
 
   const save = () =>
     fetcher.submit(
-      { config: JSON.stringify({ version: 1, groups }) },
+      {
+        config: JSON.stringify({
+          version: 1,
+          groups,
+          offerPercent: clampPct(offerPercent),
+          offerQuantity: Math.max(1, Math.round(offerQuantity) || 1),
+        }),
+      },
       { method: "POST" },
     );
 
@@ -161,18 +173,59 @@ export default function AccessoryEditor() {
           <Banner tone="critical">{fetcher.data.error}</Banner>
         )}
         <Banner tone="info">
-          Discounts here use native “Buy X Get Y” automatic discounts — no
-          Shopify Function, so they work on any plan.
+          Uses a native “Buy X Get Y” automatic discount (works on any plan, no
+          Shopify Plus). Because of Shopify’s native rules there is{" "}
+          <b>one discount rate for all accessories</b>, and the customer must add{" "}
+          <b>exactly the required number</b> of accessories to unlock it. The main
+          product must be in the cart, so the discount can’t leak to accessory-only
+          orders.
         </Banner>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">
+              The offer
+            </Text>
+            <InlineStack gap="400" blockAlign="start">
+              <Box width="160px">
+                <TextField
+                  label="Discount rate"
+                  type="number"
+                  min={0}
+                  max={100}
+                  suffix="% off"
+                  autoComplete="off"
+                  value={String(offerPercent)}
+                  onChange={(v) => setOfferPercent(clampPct(v))}
+                  helpText="Same rate for every accessory."
+                />
+              </Box>
+              <Box width="200px">
+                <TextField
+                  label="Required accessories"
+                  type="number"
+                  min={1}
+                  autoComplete="off"
+                  value={String(offerQuantity)}
+                  onChange={(v) =>
+                    setOfferQuantity(Math.max(1, Math.round(Number(v)) || 1))
+                  }
+                  helpText="How many the customer must add to get the discount."
+                />
+              </Box>
+            </InlineStack>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Example: rate 15% + required 1 → “buy this product, add any 1
+              accessory below and get 15% off it”. Required 2 → they must add 2.
+            </Text>
+          </BlockStack>
+        </Card>
 
         {groups.map((group) => (
           <Card key={group.id}>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
                 <InlineStack gap="200" blockAlign="center">
-                  <Badge tone={group.type === "free" ? "success" : "info"}>
-                    {group.type === "free" ? "Free" : "Optional"}
-                  </Badge>
                   <Box width="240px">
                     <TextField
                       label="Group title"
@@ -253,7 +306,7 @@ export default function AccessoryEditor() {
 
               {group.accessories.map((a) => {
                 const price = prices[a.productId];
-                const pct = itemPercent(group, a);
+                const pct = offerPercent;
                 const now = price != null ? price * (1 - pct / 100) : null;
                 const accVariants = variants[a.productId] ?? [];
                 const offered = a.variantIds ?? [];
@@ -286,26 +339,8 @@ export default function AccessoryEditor() {
                       </BlockStack>
                     </InlineStack>
                     <InlineStack gap="200" blockAlign="center">
-                      {group.type === "free" ? (
-                        <Badge tone="success">FREE</Badge>
-                      ) : (
-                        <Box width="110px">
-                          <TextField
-                            label="Discount %"
-                            labelHidden
-                            type="number"
-                            min={0}
-                            max={100}
-                            suffix="% off"
-                            autoComplete="off"
-                            value={String(a.discountPercent ?? 0)}
-                            onChange={(v) =>
-                              setItem(group.id, a.productId, {
-                                discountPercent: clampPct(v),
-                              })
-                            }
-                          />
-                        </Box>
+                      {offerPercent > 0 && (
+                        <Badge tone="attention">{`${offerPercent}% off`}</Badge>
                       )}
                       <Button
                         icon={DeleteIcon}
@@ -379,9 +414,8 @@ export default function AccessoryEditor() {
 
         <InlineStack gap="200">
           <Button onClick={() => addGroup("optional")}>
-            Add optional group
+            Add accessory group
           </Button>
-          <Button onClick={() => addGroup("free")}>Add free gift group</Button>
         </InlineStack>
 
         <InlineStack align="end">

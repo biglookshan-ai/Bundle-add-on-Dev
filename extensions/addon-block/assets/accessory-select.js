@@ -81,6 +81,9 @@
     }
     var groups = (config && config.groups) || [];
     if (!groups.length) return;
+    // Single native offer: one rate for every accessory, a fixed required qty.
+    var offerPercent = Number(config.offerPercent) || 0;
+    var requiredQty = Math.max(1, Number(config.offerQuantity) || 1);
     var currency = root.getAttribute("data-currency") || "USD";
     var host = root.querySelector("[data-cgp-acc-groups]");
     var cta = root.querySelector("[data-cgp-acc-cta]");
@@ -103,20 +106,40 @@
     }
 
     function updateSummary() {
+      // Only the cheapest `requiredQty` selected accessories actually discount,
+      // and only once at least `requiredQty` are selected (native BxGy rule).
+      var bases = [];
       var count = 0;
-      var save = 0;
       Object.keys(selected).forEach(function (pid) {
         var s = selected[pid];
         if (!groupVisible(s.group)) return;
         count++;
-        if (s.pct > 0 && s.base)
-          save += Math.round((s.base * s.pct) / 100);
+        if (s.base) bases.push(s.base);
       });
+      var save = 0;
+      if (offerPercent > 0 && count >= requiredQty) {
+        bases.sort(function (a, b) {
+          return a - b;
+        });
+        for (var i = 0; i < requiredQty && i < bases.length; i++)
+          save += Math.round((bases[i] * offerPercent) / 100);
+      }
       if (save > 0) {
         ctaSub.textContent =
           count +
           (count === 1 ? " add-on · you save " : " add-ons · you save ") +
           money(save, currency);
+        ctaSub.style.display = "";
+      } else if (offerPercent > 0 && count > 0 && count < requiredQty) {
+        var need = requiredQty - count;
+        ctaSub.textContent =
+          "Add " +
+          need +
+          " more add-on" +
+          (need === 1 ? "" : "s") +
+          " to get " +
+          offerPercent +
+          "% off";
         ctaSub.style.display = "";
       } else if (count > 0) {
         ctaSub.textContent =
@@ -166,7 +189,7 @@
         row.appendChild(infoCol);
         list.appendChild(row);
 
-        var pct = group.type === "free" ? 100 : Number(a.discountPercent) || 0;
+        var pct = offerPercent; // single native offer rate for every accessory
 
         function paintPrice(base) {
           var now = Math.round(base * (1 - pct / 100));
@@ -259,13 +282,6 @@
               delete selected[a.productId];
               row.classList.remove("is-selected");
             }
-          }
-
-          // Free items default to selected.
-          if (group.type === "free") {
-            input.checked = true;
-            markSelected(true);
-            updateSummary();
           }
 
           input.addEventListener("change", function () {

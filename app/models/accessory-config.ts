@@ -47,6 +47,14 @@ export type AccessoryGroup = {
 export type AccessoryConfig = {
   version: number;
   groups: AccessoryGroup[];
+  /**
+   * Native-discount offer (works on any plan, no leak): buy the main product and
+   * add exactly `offerQuantity` accessories to get `offerPercent`% off them, via
+   * a single "Buy X Get Y" automatic discount. One rate for all accessories; a
+   * fixed required quantity (Shopify's native BxGy limitation).
+   */
+  offerPercent?: number; // 1–100
+  offerQuantity?: number; // how many accessories the customer must add
 };
 
 export const EMPTY_ACC_CONFIG: AccessoryConfig = { version: 1, groups: [] };
@@ -117,10 +125,29 @@ export function parseAccConfig(raw: string | null | undefined): AccessoryConfig 
           return group;
         })
       : [];
-    return { version: 1, groups };
+    const cfg: AccessoryConfig = { version: 1, groups };
+    if (data?.offerPercent != null) {
+      const n = clampPct(data.offerPercent);
+      if (n > 0) cfg.offerPercent = n;
+    }
+    if (data?.offerQuantity != null) {
+      const q = Math.round(Number(data.offerQuantity));
+      if (Number.isFinite(q) && q > 0) cfg.offerQuantity = q;
+    }
+    return cfg;
   } catch {
     return { ...EMPTY_ACC_CONFIG };
   }
+}
+
+/** All accessory product gids eligible for the native offer (non-archived groups). */
+export function offerAccessoryGids(config: AccessoryConfig): string[] {
+  const seen = new Set<string>();
+  for (const g of config.groups) {
+    if (g.archived) continue;
+    for (const a of g.accessories) seen.add(a.productId);
+  }
+  return [...seen];
 }
 
 /**
