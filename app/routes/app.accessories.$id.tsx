@@ -178,12 +178,24 @@ export default function AccessoryEditor() {
           <Banner tone="critical">{fetcher.data.error}</Banner>
         )}
         <Banner tone="info">
-          Uses a native “Buy X Get Y” automatic discount (works on any plan, no
-          Shopify Plus). Because of Shopify’s native rules there is{" "}
-          <b>one discount rate for all accessories</b>, and the customer must add{" "}
-          <b>exactly the required number</b> of accessories to unlock it. The main
-          product must be in the cart, so the discount can’t leak to accessory-only
-          orders.
+          {bundleMode ? (
+            <>
+              Uses a native “Buy X Get Y” automatic discount (works on any plan,
+              no Shopify Plus). The customer adds the whole set with one button; the
+              discount applies to the <b>components</b> (the main product stays full
+              price). The main product must be in the cart, so nothing leaks to
+              component-only orders.
+            </>
+          ) : (
+            <>
+              Uses a native “Buy X Get Y” automatic discount (works on any plan, no
+              Shopify Plus). Because of Shopify’s native rules there is{" "}
+              <b>one discount rate for all accessories</b>, and the customer must
+              add <b>exactly the required number</b> of accessories to unlock it.
+              The main product must be in the cart, so the discount can’t leak to
+              accessory-only orders.
+            </>
+          )}
         </Banner>
 
         <Card>
@@ -253,20 +265,24 @@ export default function AccessoryEditor() {
                       onChange={(v) => setGroup(group.id, { title: v })}
                     />
                   </Box>
-                  <Box width="150px">
-                    <Select
-                      label="Select mode"
-                      labelHidden
-                      options={[
-                        { label: "Multi-select", value: "multi" },
-                        { label: "Single-select", value: "single" },
-                      ]}
-                      value={group.selectMode}
-                      onChange={(v) =>
-                        setGroup(group.id, { selectMode: v as "single" | "multi" })
-                      }
-                    />
-                  </Box>
+                  {!bundleMode && (
+                    <Box width="150px">
+                      <Select
+                        label="Select mode"
+                        labelHidden
+                        options={[
+                          { label: "Multi-select", value: "multi" },
+                          { label: "Single-select", value: "single" },
+                        ]}
+                        value={group.selectMode}
+                        onChange={(v) =>
+                          setGroup(group.id, {
+                            selectMode: v as "single" | "multi",
+                          })
+                        }
+                      />
+                    </Box>
+                  )}
                 </InlineStack>
                 <Button
                   icon={DeleteIcon}
@@ -288,7 +304,7 @@ export default function AccessoryEditor() {
                 }
               />
 
-              {mainVariants.length > 1 && (
+              {!bundleMode && mainVariants.length > 1 && (
                 <Box
                   background="bg-surface-secondary"
                   padding="300"
@@ -315,10 +331,11 @@ export default function AccessoryEditor() {
 
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="span" variant="bodySm" tone="subdued">
-                  Accessories ({group.accessories.length})
+                  {bundleMode ? "Components" : "Accessories"} (
+                  {group.accessories.length})
                 </Text>
                 <Button onClick={() => pickAccessories(group)}>
-                  Select accessories
+                  {bundleMode ? "Select components" : "Select accessories"}
                 </Button>
               </InlineStack>
 
@@ -432,7 +449,7 @@ export default function AccessoryEditor() {
 
         <InlineStack gap="200">
           <Button onClick={() => addGroup("optional")}>
-            Add accessory group
+            {bundleMode ? "Add component group" : "Add accessory group"}
           </Button>
         </InlineStack>
 
