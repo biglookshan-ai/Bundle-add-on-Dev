@@ -16,6 +16,8 @@ import {
   Thumbnail,
   Badge,
   Divider,
+  ChoiceList,
+  Collapsible,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { ImageIcon, DeleteIcon } from "@shopify/polaris-icons";
@@ -36,9 +38,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const productId = `gid://shopify/Product/${params.id}`;
   const { product, config } = await readAccConfig(admin, productId);
   if (!product) throw new Response("Product not found", { status: 404 });
-  const ids = config.groups.flatMap((g) => g.accessories.map((a) => a.productId));
-  const { prices, info, currency } = await fetchProductPrices(admin, ids);
-  return { product, config, prices, info, currency };
+  const ids = [
+    product.id, // include the main product so we know its variants
+    ...config.groups.flatMap((g) => g.accessories.map((a) => a.productId)),
+  ];
+  const { prices, info, currency, variants } = await fetchProductPrices(
+    admin,
+    ids,
+  );
+  return { product, config, prices, info, currency, variants };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -69,16 +77,37 @@ function fmt(cents: number, currency: string) {
 }
 
 export default function AccessoryEditor() {
-  const { product, config: initial, prices, info, currency } =
+  const { product, config: initial, prices, info, currency, variants } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const [groups, setGroups] = useState<AccessoryGroup[]>(initial.groups);
+  // Which accessory rows have their "limit variants" panel open.
+  const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
   const busy = fetcher.state !== "idle";
+
+  const mainVariants = variants[product.id] ?? [];
 
   const setGroup = (id: string, patch: Partial<AccessoryGroup>) =>
     setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+  const setItem = (
+    groupId: string,
+    productId: string,
+    patch: Partial<AccessoryItem>,
+  ) =>
+    setGroups((gs) =>
+      gs.map((g) =>
+        g.id === groupId
+          ? {
+              ...g,
+              accessories: g.accessories.map((x) =>
+                x.productId === productId ? { ...x, ...patch } : x,
+              ),
+            }
+          : g,
+      ),
+    );
   const addGroup = (type: "optional" | "free") =>
     setGroups((gs) => [
       ...gs,
@@ -178,6 +207,39 @@ export default function AccessoryEditor() {
                 />
               </InlineStack>
 
+              <TextField
+                label="Subtitle (optional)"
+                autoComplete="off"
+                placeholder="e.g. Add filters to protect your lens"
+                value={group.subtitle ?? ""}
+                onChange={(v) =>
+                  setGroup(group.id, { subtitle: v || undefined })
+                }
+              />
+
+              {mainVariants.length > 1 && (
+                <Box
+                  background="bg-surface-secondary"
+                  padding="300"
+                  borderRadius="200"
+                >
+                  <ChoiceList
+                    allowMultiple
+                    title="Show this group only for these main variants (leave all unchecked = always show)"
+                    choices={mainVariants.map((v) => ({
+                      label: v.title,
+                      value: v.id,
+                    }))}
+                    selected={group.mainVariantIds ?? []}
+                    onChange={(sel) =>
+                      setGroup(group.id, {
+                        mainVariantIds: sel.length ? sel : undefined,
+                      })
+                    }
+                  />
+                </Box>
+              )}
+
               <Divider />
 
               <InlineStack align="space-between" blockAlign="center">
@@ -193,9 +255,12 @@ export default function AccessoryEditor() {
                 const price = prices[a.productId];
                 const pct = itemPercent(group, a);
                 const now = price != null ? price * (1 - pct / 100) : null;
+                const accVariants = variants[a.productId] ?? [];
+                const offered = a.variantIds ?? [];
+                const rowKey = `${group.id}:${a.productId}`;
                 return (
+                 <BlockStack key={a.productId} gap="150">
                   <InlineStack
-                    key={a.productId}
                     align="space-between"
                     blockAlign="center"
                     wrap={false}
@@ -235,12 +300,8 @@ export default function AccessoryEditor() {
                             autoComplete="off"
                             value={String(a.discountPercent ?? 0)}
                             onChange={(v) =>
-                              setGroup(group.id, {
-                                accessories: group.accessories.map((x) =>
-                                  x.productId === a.productId
-                                    ? { ...x, discountPercent: clampPct(v) }
-                                    : x,
-                                ),
+                              setItem(group.id, a.productId, {
+                                discountPercent: clampPct(v),
                               })
                             }
                           />
@@ -260,6 +321,56 @@ export default function AccessoryEditor() {
                       />
                     </InlineStack>
                   </InlineStack>
+
+                  {accVariants.length > 1 && (
+                    <Box paddingInlineStart="800">
+                      <Button
+                        variant="plain"
+                        disclosure={openVariants[rowKey] ? "up" : "down"}
+                        onClick={() =>
+                          setOpenVariants((o) => ({
+                            ...o,
+                            [rowKey]: !o[rowKey],
+                          }))
+                        }
+                      >
+                        {offered.length
+                          ? `${offered.length} of ${accVariants.length} variants offered`
+                          : `All ${accVariants.length} variants offered`}
+                      </Button>
+                      <Collapsible
+                        open={!!openVariants[rowKey]}
+                        id={`vars-${rowKey}`}
+                      >
+                        <Box paddingBlockStart="200">
+                          <ChoiceList
+                            allowMultiple
+                            title="Variants offered to customers"
+                            titleHidden
+                            choices={accVariants.map((v) => ({
+                              label: v.title,
+                              value: v.id,
+                            }))}
+                            selected={
+                              offered.length
+                                ? offered
+                                : accVariants.map((v) => v.id)
+                            }
+                            onChange={(sel) =>
+                              setItem(group.id, a.productId, {
+                                variantIds:
+                                  sel.length === 0 ||
+                                  sel.length === accVariants.length
+                                    ? undefined
+                                    : sel,
+                              })
+                            }
+                          />
+                        </Box>
+                      </Collapsible>
+                    </Box>
+                  )}
+                 </BlockStack>
                 );
               })}
             </BlockStack>

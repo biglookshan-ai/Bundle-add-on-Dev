@@ -1,0 +1,148 @@
+/* Accessory offers — storefront styling. Theme-agnostic: inherits the theme's
+   font/text colour, uses subtle neutral borders and a single accent. */
+.cgp-acc {
+  --cgp-acc-accent: #e0435c;
+  --cgp-acc-border: rgba(18, 18, 18, 0.12);
+  --cgp-acc-border-strong: rgba(18, 18, 18, 0.28);
+  --cgp-acc-muted: rgba(18, 18, 18, 0.6);
+  --cgp-acc-radius: 12px;
+  margin: 20px 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.cgp-acc__group {
+  margin: 0 0 18px;
+}
+.cgp-acc__group[hidden] {
+  display: none;
+}
+.cgp-acc__title {
+  font-weight: 600;
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+.cgp-acc__subtitle {
+  color: var(--cgp-acc-muted);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.cgp-acc__list {
+  display: grid;
+  gap: 10px;
+}
+.cgp-acc__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--cgp-acc-border);
+  border-radius: var(--cgp-acc-radius);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+.cgp-acc__row:hover {
+  border-color: var(--cgp-acc-border-strong);
+}
+.cgp-acc__row.is-selected {
+  border-color: var(--cgp-acc-accent);
+  box-shadow: inset 0 0 0 1px var(--cgp-acc-accent);
+}
+.cgp-acc__check {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--cgp-acc-accent);
+  cursor: pointer;
+}
+.cgp-acc__thumb {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  background: rgba(18, 18, 18, 0.05);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cgp-acc__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cgp-acc__info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cgp-acc__name {
+  display: block;
+  font-weight: 500;
+}
+.cgp-acc__price {
+  display: block;
+  font-size: 13px;
+  margin-top: 2px;
+}
+.cgp-acc__old {
+  color: var(--cgp-acc-muted);
+  text-decoration: line-through;
+  margin-right: 6px;
+}
+.cgp-acc__new {
+  color: var(--cgp-acc-accent);
+  font-weight: 600;
+}
+.cgp-acc__free {
+  display: inline-block;
+  background: var(--cgp-acc-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.cgp-acc__variant {
+  margin-top: 8px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--cgp-acc-border);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+.cgp-acc__cta {
+  width: 100%;
+  margin-top: 6px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: var(--cgp-acc-radius);
+  background: #121212;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  transition: opacity 0.15s ease;
+}
+.cgp-acc__cta:hover {
+  opacity: 0.9;
+}
+.cgp-acc__cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.cgp-acc__cta-main {
+  display: block;
+  color: #fff;
+}
+.cgp-acc__cta-sub {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+  margin-top: 3px;
+  color: #fff;
+}

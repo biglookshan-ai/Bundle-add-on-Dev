@@ -29,10 +29,17 @@ export type AccessoryItem = {
 export type AccessoryGroup = {
   id: string;
   title: string; // "Filters", "Mounts", "Free gift"
+  /** Optional one-line helper shown under the title on the storefront. */
+  subtitle?: string;
   /** optional = customer-selected paid/discounted; free = 100% off. */
   type: "optional" | "free";
   /** single = pick at most one; multi = pick any number. */
   selectMode: "single" | "multi";
+  /**
+   * Show this group only when the selected MAIN variant is one of these
+   * (variant gids). Empty / undefined = always show.
+   */
+  mainVariantIds?: string[];
   accessories: AccessoryItem[];
   archived?: boolean;
 };
@@ -90,14 +97,25 @@ export function parseAccConfig(raw: string | null | undefined): AccessoryConfig 
   try {
     const data = JSON.parse(raw);
     const groups: AccessoryGroup[] = Array.isArray(data?.groups)
-      ? data.groups.map((g: any) => ({
-          id: typeof g?.id === "string" ? g.id : newAccGroupId(),
-          title: typeof g?.title === "string" ? g.title : "Accessories",
-          type: g?.type === "free" ? "free" : "optional",
-          selectMode: g?.selectMode === "single" ? "single" : "multi",
-          accessories: parseItems(g?.accessories),
-          archived: Boolean(g?.archived),
-        }))
+      ? data.groups.map((g: any) => {
+          const group: AccessoryGroup = {
+            id: typeof g?.id === "string" ? g.id : newAccGroupId(),
+            title: typeof g?.title === "string" ? g.title : "Accessories",
+            type: g?.type === "free" ? "free" : "optional",
+            selectMode: g?.selectMode === "single" ? "single" : "multi",
+            accessories: parseItems(g?.accessories),
+            archived: Boolean(g?.archived),
+          };
+          if (typeof g?.subtitle === "string" && g.subtitle.trim())
+            group.subtitle = g.subtitle.trim();
+          if (Array.isArray(g?.mainVariantIds)) {
+            const ids = g.mainVariantIds.filter(
+              (x: any) => typeof x === "string" && x,
+            );
+            if (ids.length) group.mainVariantIds = ids;
+          }
+          return group;
+        })
       : [];
     return { version: 1, groups };
   } catch {

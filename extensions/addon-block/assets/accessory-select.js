@@ -1,7 +1,7 @@
 /* Accessory offers — Function-FREE storefront (optional accessories + free
  * gifts). Native "Buy X Get Y" discounts (created by the app) do all the pricing
- * in the cart; this script only renders the selectors and adds the chosen
- * products to the cart. Works on any Shopify plan. */
+ * in the cart; this script only renders the selectors, shows the live saving,
+ * and adds the chosen products to the cart. Works on any Shopify plan. */
 (function () {
   var cache = {};
   function fetchProduct(handle) {
@@ -59,11 +59,11 @@
     );
   }
   // The page's currently-selected main variant id (theme's own picker).
-  function mainVariantId(root) {
+  function mainVariantId() {
     var input =
       document.querySelector('form[action*="/cart/add"] [name="id"]') ||
       document.querySelector('[name="id"]');
-    if (input && input.value) return input.value;
+    if (input && input.value) return String(input.value);
     var m = window.location.search.match(/[?&]variant=(\d+)/);
     return m ? m[1] : null;
   }
@@ -84,42 +84,106 @@
     var currency = root.getAttribute("data-currency") || "USD";
     var host = root.querySelector("[data-cgp-acc-groups]");
     var cta = root.querySelector("[data-cgp-acc-cta]");
+    var ctaLabel = cta.getAttribute("data-label") || "Add to cart";
 
-    // selected: itemProductId -> { variantId } ; free items default to selected.
+    // selected: itemProductId -> { variantId, group, base(cents), pct }
     var selected = {};
+    var groupBoxes = {}; // group.id -> box element
+
+    // Split the CTA into a main line + a live "you save" sub-line.
+    cta.textContent = "";
+    var ctaMain = el("span", "cgp-acc__cta-main", ctaLabel);
+    var ctaSub = el("span", "cgp-acc__cta-sub", "");
+    cta.appendChild(ctaMain);
+    cta.appendChild(ctaSub);
+
+    function groupVisible(groupId) {
+      var box = groupBoxes[groupId];
+      return box && !box.hidden;
+    }
+
+    function updateSummary() {
+      var count = 0;
+      var save = 0;
+      Object.keys(selected).forEach(function (pid) {
+        var s = selected[pid];
+        if (!groupVisible(s.group)) return;
+        count++;
+        if (s.pct > 0 && s.base)
+          save += Math.round((s.base * s.pct) / 100);
+      });
+      if (save > 0) {
+        ctaSub.textContent =
+          count +
+          (count === 1 ? " add-on · you save " : " add-ons · you save ") +
+          money(save, currency);
+        ctaSub.style.display = "";
+      } else if (count > 0) {
+        ctaSub.textContent =
+          count + (count === 1 ? " add-on selected" : " add-ons selected");
+        ctaSub.style.display = "";
+      } else {
+        ctaSub.style.display = "none";
+      }
+    }
+
+    // Show/hide groups based on the selected main variant, then refresh summary.
+    function applyVisibility() {
+      var current = mainVariantId();
+      groups.forEach(function (g) {
+        var box = groupBoxes[g.id];
+        if (!box) return;
+        var only = (g.mainVariantIds || []).map(gidTail);
+        box.hidden = only.length > 0 && (!current || only.indexOf(current) < 0);
+      });
+      updateSummary();
+    }
 
     function renderGroup(group) {
       var box = el("div", "cgp-acc__group");
-      box.style.cssText = "margin:14px 0;";
+      groupBoxes[group.id] = box;
       var head = el("div", "cgp-acc__title", group.title || "Accessories");
-      head.style.cssText = "font-weight:600;margin-bottom:8px;";
       box.appendChild(head);
+      if (group.subtitle)
+        box.appendChild(el("div", "cgp-acc__subtitle", group.subtitle));
+      var list = el("div", "cgp-acc__list");
+      box.appendChild(list);
 
       group.accessories.forEach(function (a) {
         var row = el("label", "cgp-acc__row");
-        row.style.cssText =
-          "display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #eee;cursor:pointer;";
-        var input = el("input");
+        var input = el("input", "cgp-acc__check");
         input.type = group.selectMode === "single" ? "radio" : "checkbox";
         input.name = "cgp-acc-" + group.id;
         input.value = a.productId;
         var media = el("span", "cgp-acc__thumb");
-        media.style.cssText =
-          "width:44px;height:44px;flex:0 0 auto;background:#f4f4f4;border-radius:6px;overflow:hidden;";
-        var infoCol = el("span");
-        infoCol.style.cssText = "flex:1;";
+        var infoCol = el("span", "cgp-acc__info");
         var name = el("span", "cgp-acc__name", a.title || a.handle);
-        name.style.cssText = "display:block;";
         var priceEl = el("span", "cgp-acc__price", "");
-        priceEl.style.cssText = "display:block;font-size:13px;opacity:.8;";
         infoCol.appendChild(name);
         infoCol.appendChild(priceEl);
         row.appendChild(input);
         row.appendChild(media);
         row.appendChild(infoCol);
-        box.appendChild(row);
+        list.appendChild(row);
 
         var pct = group.type === "free" ? 100 : Number(a.discountPercent) || 0;
+
+        function paintPrice(base) {
+          var now = Math.round(base * (1 - pct / 100));
+          if (pct > 0) {
+            priceEl.innerHTML =
+              '<span class="cgp-acc__old">' +
+              money(base, currency) +
+              "</span>" +
+              (pct >= 100
+                ? '<span class="cgp-acc__free">FREE</span>'
+                : '<span class="cgp-acc__new">' +
+                  money(now, currency) +
+                  "</span>");
+          } else {
+            priceEl.textContent = money(base, currency);
+          }
+        }
 
         fetchProduct(a.handle).then(function (data) {
           if (!data) {
@@ -131,7 +195,6 @@
           if (img) {
             var im = el("img");
             im.src = img;
-            im.style.cssText = "width:100%;height:100%;object-fit:cover;";
             media.appendChild(im);
           }
           var offered = offeredVariants(a, data);
@@ -140,23 +203,14 @@
             row.remove();
             return;
           }
-          var base = v.price;
-          var now = Math.round(base * (1 - pct / 100));
-          if (pct > 0) {
-            priceEl.innerHTML =
-              '<s style="opacity:.6">' +
-              money(base, currency) +
-              "</s> " +
-              '<b style="color:#e0435c">' +
-              (pct >= 100 ? "FREE" : money(now, currency)) +
-              "</b>";
-          } else {
-            priceEl.textContent = money(base, currency);
-          }
+          paintPrice(v.price);
+          var currentBase = v.price;
+          var getVariantId = function () {
+            return v.id;
+          };
           // A variant picker when >1 offered.
           if (offered.length > 1) {
-            var sel = el("select");
-            sel.style.cssText = "margin-top:4px;";
+            var sel = el("select", "cgp-acc__variant");
             offered.forEach(function (o) {
               var opt = el(
                 "option",
@@ -168,43 +222,67 @@
               sel.appendChild(opt);
             });
             sel.value = v.id;
-            sel.addEventListener("change", function () {
-              if (selected[a.productId])
+            getVariantId = function () {
+              return sel.value;
+            };
+            sel.addEventListener("change", function (e) {
+              e.preventDefault();
+              var chosen = offered.filter(function (o) {
+                return String(o.id) === String(sel.value);
+              })[0];
+              currentBase = chosen ? chosen.price : currentBase;
+              paintPrice(currentBase);
+              if (selected[a.productId]) {
                 selected[a.productId].variantId = sel.value;
+                selected[a.productId].base = currentBase;
+              }
+              updateSummary();
+            });
+            // Clicking the dropdown shouldn't toggle the row's checkbox.
+            sel.addEventListener("click", function (e) {
+              e.preventDefault();
+              e.stopPropagation();
             });
             infoCol.appendChild(sel);
-            v = { id: sel.value };
           }
+
+          function markSelected(on) {
+            if (on) {
+              selected[a.productId] = {
+                variantId: getVariantId(),
+                group: group.id,
+                base: currentBase,
+                pct: pct,
+              };
+              row.classList.add("is-selected");
+            } else {
+              delete selected[a.productId];
+              row.classList.remove("is-selected");
+            }
+          }
+
           // Free items default to selected.
           if (group.type === "free") {
             input.checked = true;
-            selected[a.productId] = { variantId: v.id, group: group.id };
+            markSelected(true);
+            updateSummary();
           }
-          input.__variantGetter = function () {
-            return offered.length > 1
-              ? infoCol.querySelector("select").value
-              : v.id;
-          };
-        });
 
-        input.addEventListener("change", function () {
-          if (group.selectMode === "single") {
-            // Uncheck others in the group.
-            box.querySelectorAll('input[name="cgp-acc-' + group.id + '"]').forEach(
-              function (o) {
-                if (o !== input)
-                  delete selected[o.value];
-              },
-            );
-          }
-          if (input.checked) {
-            selected[a.productId] = {
-              variantId: input.__variantGetter ? input.__variantGetter() : null,
-              group: group.id,
-            };
-          } else {
-            delete selected[a.productId];
-          }
+          input.addEventListener("change", function () {
+            if (group.selectMode === "single") {
+              list
+                .querySelectorAll('input[name="cgp-acc-' + group.id + '"]')
+                .forEach(function (o) {
+                  if (o !== input) {
+                    delete selected[o.value];
+                    var r = o.closest(".cgp-acc__row");
+                    if (r) r.classList.remove("is-selected");
+                  }
+                });
+            }
+            markSelected(input.checked);
+            updateSummary();
+          });
         });
       });
       return box;
@@ -215,15 +293,29 @@
       host.appendChild(renderGroup(g));
     });
 
+    applyVisibility();
+
+    // Re-evaluate group visibility when the theme's main variant changes.
+    var form = document.querySelector('form[action*="/cart/add"]');
+    if (form) form.addEventListener("change", applyVisibility);
+    window.addEventListener("popstate", applyVisibility);
+    var lastSearch = window.location.search;
+    setInterval(function () {
+      if (window.location.search !== lastSearch) {
+        lastSearch = window.location.search;
+        applyVisibility();
+      }
+    }, 600);
+
     cta.hidden = false;
     cta.addEventListener("click", function () {
       var items = [];
-      var mv = mainVariantId(root);
+      var mv = mainVariantId();
       if (mv) items.push({ id: mv, quantity: 1 });
       Object.keys(selected).forEach(function (pid) {
         var s = selected[pid];
-        var vid = s.variantId;
-        if (vid) items.push({ id: vid, quantity: 1 });
+        if (!groupVisible(s.group)) return; // skip hidden groups
+        if (s.variantId) items.push({ id: s.variantId, quantity: 1 });
       });
       if (!items.length) return;
       cta.disabled = true;

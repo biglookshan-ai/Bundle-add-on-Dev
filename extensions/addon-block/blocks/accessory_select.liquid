@@ -11,10 +11,17 @@
       {{ acc.value | json }}
     </script>
     <div class="cgp-acc__groups" data-cgp-acc-groups></div>
-    <button class="cgp-acc__cta" type="button" data-cgp-acc-cta hidden>
+    <button
+      class="cgp-acc__cta"
+      type="button"
+      data-cgp-acc-cta
+      data-label="{{ block.settings.cta_label | default: 'Add to cart' | escape }}"
+      hidden
+    >
       {{ block.settings.cta_label | default: 'Add to cart' }}
     </button>
   </div>
+  {{ 'accessory-select.css' | asset_url | stylesheet_tag }}
   <script src="{{ 'accessory-select.js' | asset_url }}" defer></script>
 {%- endif -%}
 
